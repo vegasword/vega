@@ -1,4 +1,4 @@
-﻿package vega
+package vega
 
 import "core:fmt"
 import "core:log"
@@ -676,7 +676,6 @@ leave_insert :: proc(editor: ^Editor, buffer: ^Buffer) {
 	buffer_commit(buffer)
 	editor.mode = .Normal
 	for &selection in buffer.selections {
-		selection.head = max(0, selection.head - 1)
 		selection.anchor = selection.head
 	}
 	buffer_clamp_selections(buffer)

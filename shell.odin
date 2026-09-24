@@ -17,6 +17,27 @@ Shell_Job :: struct {
 
 shell_job: ^Shell_Job
 
+Background_Job :: struct {
+	name: string,
+	kind: string,
+}
+
+background_jobs :: proc(editor: ^Editor, allocator := context.temp_allocator) -> []Background_Job {
+	jobs := make([dynamic]Background_Job, 0, 2, allocator)
+	if shell_job != nil {
+		append(&jobs, Background_Job{shell_job.command, "shell command"})
+	}
+	return jobs[:]
+}
+
+background_kill :: proc(job: Background_Job) {
+	if child_kill() {
+		notify(fmt.tprintf("Killed %s", job.name), .Warning)
+		return
+	}
+	notify("Nothing to kill", .Warning)
+}
+
 shell_worker :: proc(worker: ^thread.Thread) {
 	job := (^Shell_Job)(worker.data)
 	output, exit_code, ok := run_hidden(strings.concatenate({shell_prefix(), job.command}, context.temp_allocator))
@@ -61,6 +82,8 @@ shell_poll :: proc(editor: ^Editor) {
 		editor.diagnostic_cursor = -1
 		diagnostic_go(editor, 1)
 		log.infof("output of %s:\n%s", job.command, job.output)
+	} else if job.exit_code == 0 && strings.has_suffix(job.command, project_script("build")) {
+		celebration_start(editor)
 	} else {
 		title := job.exit_code == 0 ? fmt.tprintf("%s ok", job.command) : fmt.tprintf("%s failed with %d", job.command, job.exit_code)
 		output_show(editor, title, job.output, job.exit_code != 0)

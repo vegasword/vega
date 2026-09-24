@@ -21,6 +21,7 @@ Picker_Kind :: enum u8 {
 	Themes,
 	Workspaces,
 	Diagnostics,
+	Processes,
 }
 
 Picker_Item :: struct {
@@ -190,7 +191,13 @@ picker_open :: proc(editor: ^Editor, kind: Picker_Kind, name: string) {
 		}
 	case .Workspaces:
 		for root in workspace_list() {
-			picker_add(picker, {label = filename_of(root), detail = root, value = root})
+			open, typing := workspace_spent(root)
+			detail := fmt.tprintf("%s open, %s typing   %s", spent_label(open), spent_label(typing), root)
+			picker_add(picker, {label = filename_of(root), detail = detail, value = root})
+		}
+	case .Processes:
+		for job, position in background_jobs(editor) {
+			picker_add(picker, {label = job.name, detail = job.kind, buffer = position})
 		}
 	case .Diagnostics:
 		for entry, position in editor.diagnostics {
@@ -417,7 +424,7 @@ picker_preview_apply :: proc(editor: ^Editor) {
 		log.debugf("previewed %s in %.2f ms", filename_of(item.path), time.duration_milliseconds(time.tick_since(started)))
 	case .Diagnostics:
 		diagnostic_show(editor, item.buffer)
-	case .Buffers, .Commands, .Menu, .Workspaces, .None:
+	case .Buffers, .Commands, .Menu, .Workspaces, .Processes, .None:
 	}
 }
 
@@ -431,7 +438,7 @@ picker_close :: proc(editor: ^Editor, restore: bool) {
 		switch picker.kind {
 		case .Files, .Symbols, .GlobalSearch, .References, .Diagnostics:
 			wandered = true
-		case .Buffers, .Commands, .Menu, .Themes, .Workspaces, .None:
+		case .Buffers, .Commands, .Menu, .Themes, .Workspaces, .Processes, .None:
 		}
 		preview_discard(editor)
 		if wandered {
@@ -493,6 +500,16 @@ picker_key :: proc(editor: ^Editor, key: sdl.Keycode, shift, control: bool) {
 		picker_move(editor, rows)
 	case sdl.K_PAGEUP:
 		picker_move(editor, -rows)
+	case sdl.K_DELETE:
+		if picker.kind == .Processes {
+			if item, chosen := picker_selected(picker); chosen {
+				jobs := background_jobs(editor)
+				if item.buffer < len(jobs) {
+					background_kill(jobs[item.buffer])
+				}
+			}
+			picker_close(editor, false)
+		}
 	}
 }
 
@@ -532,13 +549,15 @@ picker_confirm :: proc(editor: ^Editor) {
 		workspace_open(editor, item.value)
 	case .Diagnostics:
 		diagnostic_show(editor, item.buffer)
+	case .Processes:
+		notify("Delete kills the one you pick")
 	case .Files, .Symbols, .GlobalSearch, .References:
 		jump_push(editor)
 		editor_open_file(editor, item.path)
 		if item.offset > 0 {
 			goto_offset(editor_buffer(editor), item.offset, false)
+			editor_center_view(editor)
 		}
-		editor_center_view(editor)
 	case .None:
 	}
 }

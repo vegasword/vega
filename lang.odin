@@ -138,6 +138,18 @@ word_at :: proc(text: []u8, offset: int) -> (word: string, start: int) {
 	return string(text[start:end]), start
 }
 
+qualified_member :: proc(text: []u8, tokens: [dynamic]Token, start: int) -> bool {
+	if len(tokens) < 2 {
+		return false
+	}
+	dot := tokens[len(tokens) - 1]
+	owner := tokens[len(tokens) - 2]
+	if dot.kind != .Punct || int(dot.end) != start || int(dot.end) - int(dot.start) != 1 || text[dot.start] != '.' {
+		return false
+	}
+	return owner.kind == .Identifier && owner.end == dot.start
+}
+
 tokenize :: proc(text: []u8, language: Language, tokens: ^[dynamic]Token) {
 	clear(tokens)
 	keywords := &language_filters[language].keywords
@@ -225,6 +237,8 @@ tokenize :: proc(text: []u8, language: Language, tokens: ^[dynamic]Token) {
 				}
 				if lookahead < len(text) && text[lookahead] == '(' {
 					kind = .Function
+				} else if character >= 'A' && character <= 'Z' && qualified_member(text, tokens^, start) {
+					kind = .Type
 				}
 			}
 			append(tokens, Token{kind, i32(start), i32(cursor)})

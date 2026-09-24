@@ -3,6 +3,7 @@
 import "base:intrinsics"
 import "core:math/bits"
 import "core:simd"
+import "core:strings"
 
 BYTE_LANES :: 32
 
@@ -74,6 +75,24 @@ scan_byte :: proc(text: []u8, from: int, needle: u8) -> int {
 		cursor += 1
 	}
 	return cursor
+}
+
+wrap_text :: proc(text: string, columns: int, allocator := context.allocator) -> []string {
+	lines := make([dynamic]string, 0, 4, allocator)
+	remaining := text
+	for len(remaining) > columns {
+		cut := columns
+		for cut > columns / 2 && remaining[cut] != ' ' {
+			cut -= 1
+		}
+		if remaining[cut] != ' ' {
+			cut = columns
+		}
+		append(&lines, remaining[:cut])
+		remaining = strings.trim_left_space(remaining[cut:])
+	}
+	append(&lines, remaining)
+	return lines[:]
 }
 
 count_byte :: proc(text: []u8, upto: int, needle: u8) -> int {

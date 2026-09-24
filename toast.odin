@@ -85,12 +85,10 @@ draw_toasts :: proc(editor: ^Editor) {
 		widest := 0
 		remaining := toast.text
 		for raw in strings.split_lines_iterator(&remaining) {
-			for piece := strings.trim_right_space(raw); true; {
-				cut := min(room, len(piece))
-				append(&lines, piece[:cut])
-				widest = max(widest, cut)
-				piece = piece[cut:]
-				if piece == "" || len(lines) >= 8 {
+			for piece in wrap_text(strings.trim_right_space(raw), room, context.temp_allocator) {
+				append(&lines, piece)
+				widest = max(widest, len(piece))
+				if len(lines) >= 8 {
 					break
 				}
 			}

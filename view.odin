@@ -31,9 +31,51 @@ View :: struct {
 	cursor_target: [2]f32,
 	image_zoom:    f32,
 	last_buffer:   ^Buffer,
+	last_head:     int,
 	last_rect:     Rect,
 	secondary:     [dynamic]Secondary_Cursor,
+	kept:          [dynamic]Range,
+	kept_primary:  int,
+	kept_for:      ^Buffer,
 }
+
+view_keep_cursors :: proc(editor: ^Editor, view: ^View) {
+	buffer := editor.buffers[clamp(view.buffer, 0, len(editor.buffers) - 1)]
+	clear(&view.kept)
+	append(&view.kept, ..buffer.selections[:])
+	view.kept_primary = buffer.primary
+	view.kept_for = buffer
+}
+
+view_take_cursors :: proc(editor: ^Editor, view: ^View) {
+	buffer := editor.buffers[clamp(view.buffer, 0, len(editor.buffers) - 1)]
+	if view.kept_for != buffer || len(view.kept) == 0 {
+		return
+	}
+	clear(&buffer.selections)
+	append(&buffer.selections, ..view.kept[:])
+	buffer.primary = view.kept_primary
+	buffer_clamp_selections(buffer)
+	view.last_head = buffer_primary(buffer).head
+	view.last_buffer = buffer
+}
+
+view_focus_poll :: proc(editor: ^Editor) {
+	editor.active_view = clamp(editor.active_view, 0, len(editor.views) - 1)
+	if editor.active_view == focused_view && editor_view(editor).buffer == focused_buffer {
+		return
+	}
+	if focused_view < len(editor.views) && focused_view != editor.active_view {
+		view_keep_cursors(editor, &editor.views[focused_view])
+	}
+	focused_view = editor.active_view
+	focused_buffer = editor_view(editor).buffer
+	view_take_cursors(editor, editor_view(editor))
+	log.debugf("pane %d focused on buffer %d", focused_view, focused_buffer)
+}
+
+focused_view: int
+focused_buffer: int
 
 editor_view :: proc(editor: ^Editor) -> ^View {
 	editor.active_view = clamp(editor.active_view, 0, len(editor.views) - 1)
@@ -129,26 +171,33 @@ line_rows :: proc(editor: ^Editor, view: ^View, buffer: ^Buffer, line: int) -> i
 editor_ensure_visible :: proc(editor: ^Editor) {
 	view := editor_view(editor)
 	buffer := editor_buffer(editor)
-	if view.last_buffer != buffer {
+	head := buffer_primary(buffer).head
+	line := buffer_line_of(buffer, head)
+	rows := view_visible_lines(editor, view)
+	margin := min(editor.config.scroll_off, rows / 3)
+
+	reattached := view.last_buffer != buffer
+	if reattached {
 		view.last_buffer = buffer
 		view.scroll_line = clamp(buffer.scroll, 0, max(0, buffer_line_count(buffer) - 1))
 		view.scroll_visual = f32(view.scroll_line)
 		view.cursor_ready = false
 	}
-	line := buffer_line_of(buffer, buffer_primary(buffer).head)
-	rows := view_visible_lines(editor, view)
-	margin := min(editor.config.scroll_off, rows / 3)
+	still := reattached || head == view.last_head
+	view.last_head = head
 
-	view.scroll_line = min(view.scroll_line, max(0, line - margin))
-	for {
-		used := 0
-		for scan in view.scroll_line ..= line {
-			used += line_rows(editor, view, buffer, scan)
+	if !still {
+		view.scroll_line = min(view.scroll_line, max(0, line - margin))
+		for {
+			used := 0
+			for scan in view.scroll_line ..= line {
+				used += line_rows(editor, view, buffer, scan)
+			}
+			if used + margin <= rows || view.scroll_line >= line {
+				break
+			}
+			view.scroll_line += 1
 		}
-		if used + margin <= rows || view.scroll_line >= line {
-			break
-		}
-		view.scroll_line += 1
 	}
 	view.scroll_line = clamp(view.scroll_line, 0, max(0, buffer_line_count(buffer) - 1))
 	buffer.scroll = view.scroll_line
@@ -325,7 +374,9 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 		view.cursor_ready = false
 		log.debugf("view moved to %s at line %d", filename_of(buffer.display), view.scroll_line + 1)
 	}
-	buffer.scroll = view.scroll_line
+	if active {
+		buffer.scroll = view.scroll_line
+	}
 	if (.DiffGutter in editor.config.options) {
 		buffer_refresh_hunks(buffer)
 	}
@@ -363,6 +414,11 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 	painter_set_clip(painter, {i32(pane.x), i32(pane.y), i32(pane.width), i32(pane.height)})
 
 	cursor_place := Glyph_Placement{}
+	ghost_place := Glyph_Placement{}
+	ghost_head := -1
+	if !active && view.kept_for == buffer && len(view.kept) > 0 {
+		ghost_head = view.kept[clamp(view.kept_primary, 0, len(view.kept) - 1)].head
+	}
 	clear(&view.secondary)
 	heads := make(map[int]bool, len(buffer.selections), context.temp_allocator)
 	if len(buffer.selections) > 1 {
@@ -433,6 +489,9 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 				}
 			}
 
+			if offset == ghost_head {
+				ghost_place = {x, y, true}
+			}
 			if offset == buffer_primary(buffer).head {
 				cursor_place = {x, y, true}
 			} else if heads[offset] {
@@ -499,6 +558,14 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 			push_glyph(painter, x, y, codepoint, color * [4]f32{1, 1, 1, dim}, bold)
 		}
 
+		if active && end < len(buffer.text) && selection_covers(buffer, end) {
+			segment, screen_column := 0, column - view.scroll_x
+			if (.SoftWrap in editor.config.options) {
+				segment, screen_column = wrap_place(column, columns, indent)
+			}
+			x := gutter + f32(max(0, screen_column)) * cell
+			push_rect(painter, x, line_top + f32(segment) * line_height, cell * 0.6, line_height, theme[.Selection])
+		}
 		if buffer_primary(buffer).head == end || heads[end] {
 			segment, screen_column := 0, column - view.scroll_x
 			if (.SoftWrap in editor.config.options) {
@@ -514,7 +581,11 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 		row += line_rows(editor, view, buffer, line)
 	}
 
+	if ghost_place.found {
+		push_rect(painter, ghost_place.x, ghost_place.y, cell, line_height, theme[.Cursor] * [4]f32{1, 1, 1, 0.35})
+	}
 	if active {
+		draw_diagnostic_popup(editor, view, cursor_place)
 		draw_cursors(editor, view, buffer, cursor_place, delta_time)
 		if editor.hover.open && editor.hover.view == editor.active_view {
 			draw_hover(editor, view, buffer, cursor_place)
@@ -550,6 +621,13 @@ draw_cursors :: proc(editor: ^Editor, view: ^View, buffer: ^Buffer, place: Glyph
 	head := buffer_primary(buffer).head
 	switch shape {
 	case .Block:
+		if editor.mode == .Insert {
+			push_rect(painter, target_x, target_y, cell, 1.5, color)
+			push_rect(painter, target_x, target_y + line_height - 1.5, cell, 1.5, color)
+			push_rect(painter, target_x, target_y, 1.5, line_height, color)
+			push_rect(painter, target_x + cell - 1.5, target_y, 1.5, line_height, color)
+			break
+		}
 		push_rect(painter, target_x, target_y, cell, line_height, color)
 		if head < len(buffer.text) && buffer.text[head] != '\n' && buffer.text[head] != '\t' {
 			push_glyph(painter, target_x, target_y, rune_at(buffer.text[:], head), theme[.Background])
@@ -592,6 +670,8 @@ context_hints :: proc(editor: ^Editor) -> string {
 			return "Tab next   enter switch workspace   esc cancel"
 		case .Diagnostics:
 			return "Tab next   enter goes to the problem   esc back to where you were"
+		case .Processes:
+			return "Tab next   delete kills the one you pick   esc closes"
 		case .Symbols:
 			return "Type to fuzzy match   tab next   enter jump   esc cancel"
 		case .GlobalSearch:
@@ -687,10 +767,6 @@ draw_top_bar :: proc(editor: ^Editor) {
 	}
 
 	color := theme[.Comment]
-	if entry, troubled := diagnostic_under_cursor(editor); troubled {
-		hints = entry.message
-		color = diagnostic_color(entry)
-	}
 	buttons := painter.cell_width * 12
 	room := max(0, int((f32(editor.width) - buttons - pen) / painter.cell_width) - 3)
 	if room >= 16 {
@@ -754,9 +830,8 @@ draw_status_bar :: proc(editor: ^Editor) {
 
 	line := buffer_line_of(buffer, buffer_primary(buffer).head)
 	working := ""
-	if shell_job != nil || index_job != nil {
-		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-		working = fmt.tprintf(" %s %s", frames[int(editor.time * 12) % len(frames)], shell_job != nil ? shell_job.command : "indexing")
+	if running := len(background_jobs(editor)); running > 0 {
+		working = fmt.tprintf("  %d job%s, ctrl-p", running, running == 1 ? "" : "s")
 	}
 	left := fmt.tprintf(
 		" %d sel | %d:%d | %d lines",
@@ -765,28 +840,41 @@ draw_status_bar :: proc(editor: ^Editor) {
 		buffer_column_of(buffer, buffer_primary(buffer).head) + 1,
 		buffer_line_count(buffer),
 	)
-	right := fmt.tprintf("%v | %v | %d panes | %s ", buffer.kind, buffer.language, len(editor.views), editor.config.theme_name)
+	right := fmt.tprintf("%v | %v | %d panes | %s | ", buffer.kind, buffer.language, len(editor.views), editor.config.theme_name)
 	center := fmt.tprintf("%s%s", project_relative(editor, buffer.display), (.Modified in buffer.flags) ? " +" : "")
 	if len(center) > columns / 3 {
 		center = fmt.tprintf("%s%s", filename_of(buffer.display), (.Modified in buffer.flags) ? " +" : "")
 	}
 
 	left = left[:min(len(left), columns / 3)]
-	right = right[:min(len(right), columns / 3)]
-	center = center[:min(len(center), max(0, columns - len(left) - len(right) - 2))]
 
 	pen := push_text(painter, mode_width, text_y, left, theme[.StatusText])
 	if working != "" {
 		pen = push_text(painter, pen, text_y, working, theme[.Accent])
 	}
-	right_x := f32(editor.width) - painter.cell_width * f32(len(right))
+	year, month, day, hour, minute, _ := local_clock()
+	clock := fmt.tprintf("%04d-%02d-%02d %02d:%02d ", year, month, day, hour, minute)
+	clock_x := f32(editor.width) - painter.cell_width * f32(len(clock))
+	if clock_x > pen + painter.cell_width {
+		push_text(painter, clock_x, text_y, clock, theme[.StatusText])
+	} else {
+		clock_x = f32(editor.width)
+	}
+	room := max(0, int((clock_x - pen) / painter.cell_width) - 2)
+	right = right[:min(len(right), room)]
+	right_x := clock_x - painter.cell_width * f32(len(right))
+	if len(right) > 0 {
+		push_text(painter, right_x, text_y, right, theme[.Gutter])
+	}
+	center = center[:min(len(center), max(0, int((right_x - pen) / painter.cell_width) - 2))]
 	center_x := clamp(
 		(f32(editor.width) - painter.cell_width * f32(len(center))) / 2,
 		pen + painter.cell_width,
 		max(pen + painter.cell_width, right_x - painter.cell_width * f32(len(center) + 1)),
 	)
-	push_text(painter, center_x, text_y, center, theme[.Text])
-	push_text(painter, right_x, text_y, right, theme[.Gutter])
+	if len(center) > 0 {
+		push_text(painter, center_x, text_y, center, theme[.Text])
+	}
 }
 
 picker_rows :: proc(editor: ^Editor) -> int {
@@ -844,6 +932,9 @@ draw_picker :: proc(editor: ^Editor) {
 
 editor_animating :: proc(editor: ^Editor) -> bool {
 	if len(toasts) > 0 || dialog_open || editor.picker.preview_due != 0 || editor.picker.warming {
+		return true
+	}
+	if celebration.life > 0 {
 		return true
 	}
 	if (.ConfigDirty in editor.flags) || (.SessionDirty in editor.flags) {

@@ -159,8 +159,8 @@ draw_hover :: proc(editor: ^Editor, view: ^View, buffer: ^Buffer, place: Glyph_P
 		}
 		anchor_y := clamp(target_y, y, y + height)
 		anchor_x := target_x < x ? x : x + width
-		push_line(painter, anchor_x, anchor_y, target_x, target_y, 1.5, theme[.Accent] * [4]f32{1, 1, 1, 0.35})
-		push_rect(painter, reference_x, reference_y, cell * f32(len(hover.name)), line_height_of(editor), theme[.Match] * [4]f32{1, 1, 1, 0.45})
+		push_line(painter, anchor_x, anchor_y, target_x, target_y, 1.5, theme[.Accent])
+		push_rect(painter, reference_x, reference_y, cell * f32(len(hover.name)), line_height_of(editor), theme[.Accent] * [4]f32{1, 1, 1, 0.3})
 	}
 
 	push_rect(painter, x - 2, y - 2, width + 4, height + 4, theme[.Accent] * [4]f32{1, 1, 1, 0.9})

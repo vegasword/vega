@@ -59,12 +59,21 @@ draw_output :: proc(editor: ^Editor, view: ^View, place: Glyph_Placement) {
 	line_height := line_height_of(editor)
 	rect := view.rect
 
-	shown := min(len(output.lines) - output.scroll, OUTPUT_LINES)
-	widest := len(output.title) + 12
-	for index in output.scroll ..< output.scroll + shown {
-		widest = max(widest, len(output.lines[index]))
+	room := max(16, int(rect.width / cell) - 6)
+	wrapped := make([dynamic]string, 0, OUTPUT_LINES * 2, context.temp_allocator)
+	for index in output.scroll ..< len(output.lines) {
+		for piece in wrap_text(output.lines[index], room, context.temp_allocator) {
+			append(&wrapped, piece)
+		}
+		if len(wrapped) >= OUTPUT_LINES {
+			break
+		}
 	}
-	room := max(16, int(rect.width / cell) - 4)
+	shown := min(len(wrapped), OUTPUT_LINES)
+	widest := len(output.title) + 12
+	for index in 0 ..< shown {
+		widest = max(widest, len(wrapped[index]))
+	}
 	widest = min(widest, room)
 
 	width := cell * f32(widest + 4)
@@ -86,8 +95,7 @@ draw_output :: proc(editor: ^Editor, view: ^View, place: Glyph_Placement) {
 	push_text(painter, x + cell, y + line_height * 0.25, output.title, accent)
 	push_text(painter, x + cell + f32(len(output.title)) * cell, y + line_height * 0.25, header, theme[.Comment])
 	for index in 0 ..< shown {
-		line := output.lines[output.scroll + index]
-		push_text(painter, x + cell, y + line_height * (f32(index) + 1.15), line[:min(len(line), room)], theme[.Text])
+		push_text(painter, x + cell, y + line_height * (f32(index) + 1.15), wrapped[index], theme[.Text])
 	}
 	if more != "" {
 		push_text(painter, x + width - cell * 5, y + height - line_height, more, theme[.Comment])

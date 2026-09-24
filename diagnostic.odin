@@ -112,7 +112,6 @@ diagnostic_show :: proc(editor: ^Editor, index: int) {
 	start, end := buffer_line_bounds(buffer, clamp(entry.line - 1, 0, buffer_line_count(buffer) - 1))
 	goto_offset(buffer, clamp(start + max(0, entry.column - 1), start, end), false)
 	editor_center_view(editor)
-	notify(fmt.tprintf("%d of %d  %s", editor.diagnostic_cursor + 1, len(editor.diagnostics), entry.message))
 }
 
 DIAGNOSTIC_RED :: [4]f32{0.91, 0.27, 0.31, 1}
@@ -157,7 +156,40 @@ draw_diagnostic_mark :: proc(editor: ^Editor, buffer: ^Buffer, line: int, gutter
 		return
 	}
 	left := gutter + f32(max(0, from)) * cell
-	push_line(painter, left, y + line_height - 1.5, gutter + f32(to) * cell, y + line_height - 1.5, 1.5, color)
+	push_rect(painter, left, y, gutter + f32(to) * cell - left, line_height, color * [4]f32{1, 1, 1, 0.28})
+}
+
+draw_diagnostic_popup :: proc(editor: ^Editor, view: ^View, place: Glyph_Placement) {
+	entry, found := diagnostic_under_cursor(editor)
+	if !found || !place.found {
+		return
+	}
+	painter := &editor.painter
+	theme := editor.active_theme
+	cell := painter.cell_width
+	line_height := line_height_of(editor)
+	rect := view.rect
+	color := diagnostic_color(entry)
+
+	room := max(24, int(rect.width / cell) - 8)
+	lines := wrap_text(entry.message, room, context.temp_allocator)
+	widest := 0
+	for line in lines {
+		widest = max(widest, len(line))
+	}
+	width := cell * f32(widest + 2)
+	height := line_height * f32(len(lines)) + line_height * 0.4
+	x := clamp(place.x, rect.x + cell, max(rect.x + cell, rect.x + rect.width - width - cell))
+	y := place.y + line_height
+	if y + height > rect.y + rect.height {
+		y = max(rect.y, place.y - height)
+	}
+
+	push_rect(painter, x - 2, y - 2, width + 4, height + 4, color)
+	push_rect(painter, x, y, width, height, theme[.Overlay])
+	for line, index in lines {
+		push_text(painter, x + cell, y + line_height * (f32(index) + 0.2), line, color)
+	}
 }
 
 diagnostic_under_cursor :: proc(editor: ^Editor) -> (Diagnostic, bool) {

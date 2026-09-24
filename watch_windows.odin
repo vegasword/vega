@@ -3,6 +3,7 @@ package vega
 
 import "base:intrinsics"
 import "core:log"
+import "core:path/filepath"
 import "core:strings"
 import "core:thread"
 import win "core:sys/windows"
@@ -29,11 +30,62 @@ watch_worker :: proc(worker: ^thread.Thread) {
 		if !win.ReadDirectoryChangesW(watch.handle, raw_data(buffer), win.DWORD(len(buffer)), true, filter, &written, nil, nil) {
 			return
 		}
-		if written > 0 {
+		if written > 0 && watch_worth_it(buffer[:written]) {
 			intrinsics.atomic_store(&watch.touched, true)
-			log.debugf("the watcher saw %d byte(s) of changes", written)
 		}
 	}
+}
+
+FILE_NOTIFY_INFORMATION :: struct {
+	NextEntryOffset: win.DWORD,
+	Action:          win.DWORD,
+	FileNameLength:  win.DWORD,
+	FileName:        [1]u16,
+}
+
+watch_worth_it :: proc(records: []u8) -> bool {
+	cursor := 0
+	for cursor + size_of(FILE_NOTIFY_INFORMATION) <= len(records) {
+		entry := (^FILE_NOTIFY_INFORMATION)(raw_data(records[cursor:]))
+		letters := (cast([^]u16)&entry.FileName)[:entry.FileNameLength / 2]
+		name, error := win.utf16_to_utf8(letters, context.temp_allocator)
+		if error == nil && watch_interesting(name) {
+			log.debugf("the watcher cares about %s", name)
+			return true
+		}
+		if entry.NextEntryOffset == 0 {
+			break
+		}
+		cursor += int(entry.NextEntryOffset)
+	}
+	return false
+}
+
+watch_interesting :: proc(name: string) -> bool {
+	remaining := name
+	for {
+		cut := max(strings.index_byte(remaining, '/'), strings.index_byte(remaining, '\\'))
+		if cut < 0 {
+			break
+		}
+		folder := remaining[:cut]
+		if word_in_set(skipped_directories, folder) || strings.has_prefix(folder, ".") {
+			return false
+		}
+		remaining = remaining[cut + 1:]
+	}
+	if remaining == "" {
+		return true
+	}
+	extension := strings.to_lower(filepath.ext(remaining), context.temp_allocator)
+	if extension == "" {
+		return true
+	}
+	switch extension {
+	case ".exe", ".pdb", ".obj", ".lib", ".ilk", ".dll", ".bmp", ".png", ".log", ".tmp", ".writing":
+		return false
+	}
+	return true
 }
 
 watch_start :: proc(root: string) {
@@ -80,6 +132,10 @@ watch_stop :: proc() {
 	delete(watcher.root)
 	free(watcher)
 	watcher = nil
+}
+
+watch_running :: proc() -> bool {
+	return watcher != nil
 }
 
 watch_taken :: proc() -> bool {

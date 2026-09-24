@@ -21,8 +21,9 @@ fallback_font_paths := []string {
 Face :: struct {
 	info:  stbtt.fontinfo,
 	data:  []u8,
-	owned: bool,
-	scale: f32,
+	owned:   bool,
+	scale:   f32,
+	scale_x: f32,
 }
 
 Glyph :: struct {
@@ -72,6 +73,7 @@ face_open :: proc(painter: ^Painter, data: []u8, owned: bool, size: f32) -> bool
 		return false
 	}
 	face.scale = stbtt.ScaleForPixelHeight(&face.info, size)
+	face.scale_x = face.scale
 	append(&painter.faces, face)
 	return true
 }
@@ -105,6 +107,18 @@ painter_load_font :: proc(painter: ^Painter, size: f32) -> bool {
 	painter.ascent = f32(ascent) * primary.scale
 	painter.line_height = math.ceil(f32(ascent - descent + line_gap) * primary.scale)
 	painter.cell_width = math.ceil(f32(advance) * primary.scale)
+
+	painter.faces[0].scale_x = painter.cell_width / f32(advance)
+	for &face in painter.faces[1:] {
+		face_ascent, face_descent, face_gap: c.int
+		stbtt.GetFontVMetrics(&face.info, &face_ascent, &face_descent, &face_gap)
+		if face_ascent > 0 {
+			face.scale = painter.ascent / f32(face_ascent)
+		}
+		face_advance, face_bearing: c.int
+		stbtt.GetCodepointHMetrics(&face.info, 'M', &face_advance, &face_bearing)
+		face.scale_x = face_advance > 0 ? painter.cell_width / f32(face_advance) : face.scale
+	}
 
 	if painter.atlas == nil {
 		painter.atlas = sdl.CreateSurface(ATLAS_SIDE, ATLAS_SIDE, .RGBA32)
@@ -170,7 +184,7 @@ painter_glyph :: proc(painter: ^Painter, codepoint: rune, bold := false, index :
 	}
 
 	width, height, offset_x, offset_y: c.int
-	pixels := stbtt.GetGlyphBitmap(&face.info, face.scale, face.scale, glyph_index, &width, &height, &offset_x, &offset_y)
+	pixels := stbtt.GetGlyphBitmap(&face.info, face.scale_x, face.scale, glyph_index, &width, &height, &offset_x, &offset_y)
 	defer if pixels != nil {stbtt.FreeBitmap(pixels, nil)}
 
 	glyph := Glyph {
@@ -254,7 +268,7 @@ push_rect :: proc(painter: ^Painter, x, y, width, height: f32, color: [4]f32) {
 	push_quad(painter, x, y, width, height, painter.white_u, painter.white_v, painter.white_u, painter.white_v, color)
 }
 
-push_glyph :: proc(painter: ^Painter, x, y: f32, codepoint: rune, color: [4]f32, bold := false) {
+push_glyph :: proc(painter: ^Painter, x, y: f32, codepoint: rune, color: [4]f32, bold := false, zoom: f32 = 1) {
 	glyph := painter_glyph(painter, codepoint, bold)
 	if glyph.missing {
 		push_rect(painter, x + 1, y + painter.line_height * 0.25, painter.cell_width - 2, painter.line_height * 0.5, color * [4]f32{1, 1, 1, 0.25})
@@ -263,8 +277,8 @@ push_glyph :: proc(painter: ^Painter, x, y: f32, codepoint: rune, color: [4]f32,
 	if glyph.width == 0 {
 		return
 	}
-	allowed := painter.cell_width * f32(rune_columns(codepoint))
-	scale := glyph.width > allowed ? allowed / glyph.width : 1
+	allowed := painter.cell_width * f32(rune_columns(codepoint)) * 1.15
+	scale := (glyph.width > allowed ? allowed / glyph.width : 1) * zoom
 	push_quad(
 		painter,
 		x + glyph.offset_x * scale,
@@ -298,15 +312,15 @@ push_line :: proc(painter: ^Painter, from_x, from_y, to_x, to_y, thickness: f32,
 	append(&painter.indices, base, base + 1, base + 2, base, base + 2, base + 3)
 }
 
-push_text :: proc(painter: ^Painter, x, y: f32, text: string, color: [4]f32, bold := false) -> f32 {
+push_text :: proc(painter: ^Painter, x, y: f32, text: string, color: [4]f32, bold := false, zoom: f32 = 1) -> f32 {
 	pen := x
 	for codepoint in text {
 		if codepoint == '\t' {
-			pen += painter.cell_width * 4
+			pen += painter.cell_width * 4 * zoom
 			continue
 		}
-		push_glyph(painter, pen, y, codepoint, color, bold)
-		pen += painter.cell_width * f32(rune_columns(codepoint))
+		push_glyph(painter, pen, y, codepoint, color, bold, zoom)
+		pen += painter.cell_width * f32(rune_columns(codepoint)) * zoom
 	}
 	return pen
 }

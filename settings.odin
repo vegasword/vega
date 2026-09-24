@@ -59,7 +59,6 @@ Field :: struct {
 	low:     f32,
 	high:    f32,
 	step:    f32,
-	action:  Command,
 }
 
 keyboard_scancodes := [][]sdl.Scancode {
@@ -245,7 +244,7 @@ settings_fields :: proc(editor: ^Editor) -> []Field {
 		append(&fields, Field{label = "Pair quotes", help = option_help[.PairQuotes], kind = .Toggle, option = .PairQuotes})
 		append(&fields, Field{label = "Pair single quotes", help = option_help[.PairSingles], kind = .Toggle, option = .PairSingles})
 		append(&fields, Field{label = "Pair backticks", help = option_help[.PairBackticks], kind = .Toggle, option = .PairBackticks})
-		append(&fields, Field{label = "Your name", help = "Signs the todo and note comments of ctrl-t and ctrl-n", kind = .Text, action = .None})
+		append(&fields, Field{label = "Your name", help = "Signs the todo and note comments of ctrl-t and ctrl-n", kind = .Text})
 	case .View:
 		append(&fields, Field{label = "Centred square", help = option_help[.Centered], kind = .Toggle, option = .Centered})
 		append(&fields, Field{label = "Square ratio", help = "How much taller than wide the pane may be before the square shrinks", kind = .Real, real = &config.aspect_ratio, low = 1, high = 2, step = 0.05})
@@ -273,13 +272,14 @@ settings_fields :: proc(editor: ^Editor) -> []Field {
 		append(&fields, Field{label = "Click in insert", help = option_help[.ClickInsert], kind = .Toggle, option = .ClickInsert})
 		append(&fields, Field{label = "Click in select", help = option_help[.ClickSelect], kind = .Toggle, option = .ClickSelect})
 		append(&fields, Field{label = "Delete sound", help = option_help[.DeleteSound], kind = .Toggle, option = .DeleteSound})
+		append(&fields, Field{label = "Delete sample", help = "Which deletion sample is played", kind = .Choice, choice = &config.delete_kind, choices = sfx_deletion_names()})
 		append(&fields, Field{label = "Delete volume", help = "How loud a deletion is", kind = .Real, real = &config.delete_volume, low = 0, high = 1, step = 0.05})
 		append(&fields, Field{label = "Brown noise", help = option_help[.BrownNoise], kind = .Toggle, option = .BrownNoise})
 		append(&fields, Field{label = "Noise volume", help = "How loud the brown noise is", kind = .Real, real = &config.noise_volume, low = 0, high = 1, step = 0.05})
 		append(&fields, Field{label = "Noise tone", help = "Sweeps the corner from 50 Hz to 800 Hz, the middle of the slider being 200 Hz", kind = .Real, real = &config.noise_tone, low = 0, high = 1, step = 0.05})
 	case .Appearance:
 		append(&fields, Field{label = "Font size", help = "Rebuilds the glyph atlas live", kind = .Real, real = &config.font_size, low = 8, high = 48, step = 1})
-		append(&fields, Field{label = "Theme preset", help = "Browse the themes with a live preview", kind = .Action, action = .None})
+		append(&fields, Field{label = "Theme preset", help = "Browse the themes with a live preview", kind = .Action})
 		append(&fields, Field{label = "Ligatures", help = option_help[.Ligatures], kind = .Toggle, option = .Ligatures})
 		append(&fields, Field{label = "True black", help = option_help[.TrueBlack], kind = .Toggle, option = .TrueBlack})
 	case .Keys:

@@ -87,6 +87,76 @@ workspace_remember :: proc(root: string) {
 
 workspace_due: u64
 
+Workspace_Clock :: struct {
+	open:    f64,
+	typing:  f64,
+	stamped: u64,
+}
+
+workspace_clock: Workspace_Clock
+
+workspace_tick :: proc(delta_time: f32) {
+	workspace_clock.open += f64(delta_time)
+	if u64(sdl.GetTicks()) < workspace_clock.stamped + 2000 {
+		workspace_clock.typing += f64(delta_time)
+	}
+}
+
+workspace_typed :: proc() {
+	workspace_clock.stamped = u64(sdl.GetTicks())
+}
+
+workspace_clock_load :: proc(root: string) {
+	workspace_clock = {}
+	data, error := os.read_entire_file(workspace_clock_path(root), context.temp_allocator)
+	if error != nil {
+		return
+	}
+	fields := strings.fields(string(data), context.temp_allocator)
+	if len(fields) >= 2 {
+		workspace_clock.open = f64(parse_number(fields[0]))
+		workspace_clock.typing = f64(parse_number(fields[1]))
+	}
+}
+
+workspace_clock_save :: proc(root: string) {
+	text := fmt.tprintf("%.1f %.1f\n", workspace_clock.open, workspace_clock.typing)
+	if os.write_entire_file(workspace_clock_path(root), transmute([]u8)text) != nil {
+		log.debug("the workspace clock could not be written")
+	}
+}
+
+workspace_clock_path :: proc(root: string, allocator := context.temp_allocator) -> string {
+	session := workspace_session_path(root, context.temp_allocator)
+	return strings.concatenate({session[:len(session) - len(".session")], ".clock"}, allocator)
+}
+
+workspace_spent :: proc(root: string) -> (open, typing: f64) {
+	if root == workspace_current {
+		return workspace_clock.open, workspace_clock.typing
+	}
+	data, error := os.read_entire_file(workspace_clock_path(root), context.temp_allocator)
+	if error != nil {
+		return 0, 0
+	}
+	fields := strings.fields(string(data), context.temp_allocator)
+	if len(fields) < 2 {
+		return 0, 0
+	}
+	return f64(parse_number(fields[0])), f64(parse_number(fields[1]))
+}
+
+workspace_current: string
+
+spent_label :: proc(seconds: f64, allocator := context.temp_allocator) -> string {
+	hours := int(seconds) / 3600
+	minutes := (int(seconds) % 3600) / 60
+	if hours > 0 {
+		return fmt.aprintf("%dh%02d", hours, minutes, allocator = allocator)
+	}
+	return fmt.aprintf("%dm", max(1, minutes), allocator = allocator)
+}
+
 workspace_poll :: proc(editor: ^Editor) {
 	if watch_taken() {
 		workspace_due = u64(sdl.GetTicks()) + 400
@@ -140,7 +210,11 @@ workspace_open :: proc(editor: ^Editor, root: string) {
 		notify("Could not enter that folder")
 		return
 	}
+	workspace_clock_save(editor.index.root)
 	index_start(&editor.index, full)
+	delete(workspace_current)
+	workspace_current = strings.clone(full)
+	workspace_clock_load(full)
 	preview_cache_clear()
 	for buffer in editor.buffers {
 		buffer_destroy(buffer)

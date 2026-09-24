@@ -109,6 +109,61 @@ layout_focus :: proc(editor: ^Editor, delta: int) {
 	editor.active_view = editor.nodes[editor.active_node].view
 }
 
+Direction :: enum u8 {
+	Left,
+	Right,
+	Up,
+	Down,
+}
+
+layout_focus_direction :: proc(editor: ^Editor, direction: Direction) {
+	here := editor.views[editor.active_view].rect
+	from_x := here.x + here.width / 2
+	from_y := here.y + here.height / 2
+	best := -1
+	best_gap, best_offset := max(f32), max(f32)
+	for leaf in layout_ordered_leaves(editor) {
+		if leaf == editor.active_node {
+			continue
+		}
+		rect := editor.views[editor.nodes[leaf].view].rect
+		center_x := rect.x + rect.width / 2
+		center_y := rect.y + rect.height / 2
+		gap, offset: f32
+		switch direction {
+		case .Left:
+			if center_x >= from_x {
+				continue
+			}
+			gap, offset = from_x - center_x, abs(center_y - from_y)
+		case .Right:
+			if center_x <= from_x {
+				continue
+			}
+			gap, offset = center_x - from_x, abs(center_y - from_y)
+		case .Up:
+			if center_y >= from_y {
+				continue
+			}
+			gap, offset = from_y - center_y, abs(center_x - from_x)
+		case .Down:
+			if center_y <= from_y {
+				continue
+			}
+			gap, offset = center_y - from_y, abs(center_x - from_x)
+		}
+		if offset < best_offset || (offset == best_offset && gap < best_gap) {
+			best, best_gap, best_offset = leaf, gap, offset
+		}
+	}
+	if best < 0 {
+		return
+	}
+	editor.active_node = best
+	editor.active_view = editor.nodes[best].view
+	log.debugf("focus %v to pane %d", direction, editor.active_view)
+}
+
 layout_resize :: proc(editor: ^Editor, amount: f32) {
 	parent := editor.nodes[editor.active_node].parent
 	if parent < 0 {

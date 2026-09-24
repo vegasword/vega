@@ -28,6 +28,7 @@ handle_text :: proc(editor: ^Editor, text: string) {
 	if len(text) == 0 {
 		return
 	}
+	workspace_typed()
 	sfx_click(editor)
 	if editor.hover.open {
 		hover_close(editor)
@@ -41,6 +42,13 @@ handle_text :: proc(editor: ^Editor, text: string) {
 		return
 	}
 	if editor.prompt != .None {
+		if editor.prompt == .GotoLine {
+			for character in text {
+				if character < '0' || character > '9' {
+					return
+				}
+			}
+		}
 		editor.prompt_cursor = clamp(editor.prompt_cursor, 0, len(editor.prompt_input))
 		inject_at(&editor.prompt_input, editor.prompt_cursor, text)
 		editor.prompt_cursor += len(text)
@@ -186,6 +194,10 @@ handle_key :: proc(editor: ^Editor, key: sdl.Keycode, mods: sdl.Keymod, scancode
 
 	if editor.prompt != .None {
 		editor.prompt_cursor = clamp(editor.prompt_cursor, 0, len(editor.prompt_input))
+		if control && (key == sdl.K_BACKSPACE || key == sdl.K_DELETE) {
+			prompt_delete_word(editor, key == sdl.K_DELETE)
+			return
+		}
 		switch key {
 		case sdl.K_ESCAPE:
 			prompt_restore(editor)
@@ -349,6 +361,31 @@ prompt_open :: proc(editor: ^Editor, kind: Prompt_Kind) {
 	log.debugf("prompt %v opened", kind)
 }
 
+prompt_delete_word :: proc(editor: ^Editor, forward: bool) {
+	input := editor.prompt_input[:]
+	cursor := editor.prompt_cursor
+	edge := cursor
+	if forward {
+		for edge < len(input) && !is_word_byte(input[edge]) {
+			edge += 1
+		}
+		for edge < len(input) && is_word_byte(input[edge]) {
+			edge += 1
+		}
+		remove_range(&editor.prompt_input, cursor, edge)
+	} else {
+		for edge > 0 && !is_word_byte(input[edge - 1]) {
+			edge -= 1
+		}
+		for edge > 0 && is_word_byte(input[edge - 1]) {
+			edge -= 1
+		}
+		remove_range(&editor.prompt_input, edge, cursor)
+		editor.prompt_cursor = edge
+	}
+	prompt_preview(editor)
+}
+
 prompt_restore :: proc(editor: ^Editor) {
 	if len(editor.prompt_selections) == 0 {
 		return
@@ -391,9 +428,6 @@ prompt_confirm :: proc(editor: ^Editor) {
 	case .Search, .SearchBackward:
 		delete(editor.search_pattern)
 		editor.search_pattern = strings.clone(input)
-		if !search_in_buffer(buffer, input, kind == .Search) {
-			editor_status(editor, fmt.tprintf("Pattern not found: %s", input))
-		}
 		editor_center_view(editor)
 	case .SelectMatches:
 		prompt_restore(editor)

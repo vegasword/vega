@@ -19,7 +19,9 @@ Sfx :: struct {
 	families:  [dynamic]string,
 	samples:   [dynamic]Click_Sample,
 	deletions: [dynamic][]u8,
+	deletion_names: [dynamic]string,
 	streams:   [SFX_STREAMS]^sdl.AudioStream,
+	deleter:   ^sdl.AudioStream,
 	noise:     ^sdl.AudioStream,
 	brown:     f32,
 	blocked:   f32,
@@ -89,6 +91,7 @@ sfx_load :: proc(editor: ^Editor) {
 		family := sample_family(entry.name)
 		if family == DELETION_FAMILY {
 			append(&sfx.deletions, buffer[:length])
+			append(&sfx.deletion_names, strings.clone(strings.trim_suffix(entry.name, ".wav")))
 			continue
 		}
 		index := -1
@@ -115,6 +118,10 @@ sfx_load :: proc(editor: ^Editor) {
 			return
 		}
 		sdl.ResumeAudioStreamDevice(sfx.streams[position])
+	}
+	sfx.deleter = sdl.OpenAudioDeviceStream(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nil, nil)
+	if sfx.deleter != nil {
+		sdl.ResumeAudioStreamDevice(sfx.deleter)
 	}
 	sfx.ready = true
 	editor.config.click_kind = u8(clamp(int(editor.config.click_kind), 0, len(sfx.families) - 1))
@@ -155,21 +162,31 @@ sfx_click :: proc(editor: ^Editor) {
 	}
 
 	sample := sfx.samples[choices[rand.int_max(len(choices))]]
-	sfx_play(editor, sample.data, editor.config.click_volume, 0.88 + rand.float32() * 0.24)
+	sfx_play(sample.data, editor.config.click_volume, 0.88 + rand.float32() * 0.24)
 	if !sfx.logged {
 		sfx.logged = true
 		log.debugf("first key click from %s", sfx.families[family])
 	}
 }
 
-sfx_delete :: proc(editor: ^Editor) {
-	if !sfx.ready || len(sfx.deletions) == 0 || !(.DeleteSound in editor.config.options) {
-		return
-	}
-	sfx_play(editor, sfx.deletions[rand.int_max(len(sfx.deletions))], editor.config.delete_volume, 0.94 + rand.float32() * 0.12)
+sfx_deletion_names :: proc() -> []string {
+	return len(sfx.deletion_names) == 0 ? no_family : sfx.deletion_names[:]
 }
 
-sfx_play :: proc(editor: ^Editor, data: []u8, volume, ratio: f32) {
+sfx_delete :: proc(editor: ^Editor) {
+	if !sfx.ready || sfx.deleter == nil || len(sfx.deletions) == 0 {
+		return
+	}
+	if !(.DeleteSound in editor.config.options) || editor.config.delete_volume <= 0 {
+		return
+	}
+	sample := sfx.deletions[clamp(int(editor.config.delete_kind), 0, len(sfx.deletions) - 1)]
+	sdl.ClearAudioStream(sfx.deleter)
+	sdl.SetAudioStreamGain(sfx.deleter, editor.config.delete_volume)
+	sdl.PutAudioStreamData(sfx.deleter, raw_data(sample), i32(len(sample)))
+}
+
+sfx_play :: proc(data: []u8, volume, ratio: f32) {
 	if volume <= 0 {
 		return
 	}

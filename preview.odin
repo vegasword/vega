@@ -62,7 +62,7 @@ preview_warm :: proc(editor: ^Editor) {
 	picker.warming = false
 	switch picker.kind {
 	case .Files, .Symbols, .GlobalSearch, .References:
-	case .Buffers, .Menu, .Commands, .Themes, .Workspaces, .Diagnostics, .None:
+	case .Buffers, .Menu, .Commands, .Themes, .Workspaces, .Diagnostics, .Processes, .None:
 		return
 	}
 	read := 0
@@ -100,8 +100,8 @@ preview_show :: proc(editor: ^Editor, path: string, offset: int) {
 			editor_view(editor).buffer = index
 			if offset > 0 {
 				goto_offset(buffer, offset, false)
+				editor_center_view(editor)
 			}
-			editor_center_view(editor)
 			return
 		}
 	}

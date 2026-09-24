@@ -1,12 +1,23 @@
 #+build windows
 package vega
 
+import "base:intrinsics"
 import "core:log"
 import "core:strings"
 import windows "core:sys/windows"
 
+running_child: uintptr
+
 attach_console :: proc() {
 	windows.AttachConsole(0xffffffff)
+}
+
+child_kill :: proc() -> bool {
+	handle := intrinsics.atomic_load(&running_child)
+	if handle == 0 {
+		return false
+	}
+	return bool(windows.TerminateProcess(windows.HANDLE(handle), 1))
 }
 
 run_hidden :: proc(command_line: string, working_directory := "", allocator := context.allocator) -> (output: string, exit_code: u32, ok: bool) {
@@ -54,6 +65,8 @@ run_hidden :: proc(command_line: string, working_directory := "", allocator := c
 	}
 	defer windows.CloseHandle(information.hProcess)
 	defer windows.CloseHandle(information.hThread)
+	intrinsics.atomic_store(&running_child, uintptr(information.hProcess))
+	defer intrinsics.atomic_store(&running_child, 0)
 
 	builder := strings.builder_make(allocator)
 	chunk: [4096]u8

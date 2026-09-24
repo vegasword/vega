@@ -89,10 +89,10 @@ draw_window_buttons :: proc(editor: ^Editor) {
 		left := editor.buttons_left + f32(index) * width
 		hovered := editor.hovered_button == button
 		if hovered {
-			tint := button == .Close ? theme[.Directive] : theme[.Selection]
+			tint := button == .Close ? DIAGNOSTIC_RED : theme[.Selection]
 			push_rect(painter, left, 0, width, height, tint)
 		}
-		color := hovered ? theme[.Text] : theme[.Gutter]
+		color := hovered ? (button == .Close ? [4]f32{1, 1, 1, 1} : theme[.Text]) : theme[.Gutter]
 		middle_x := left + width / 2
 		middle_y := height / 2
 		switch button {

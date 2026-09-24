@@ -8,6 +8,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
+import "core:sync"
 import cpu_info "core:sys/info"
 import "core:thread"
 import "core:time"
@@ -174,6 +175,7 @@ Index_Share :: struct {
 	running: int,
 	arenas:  ^Index_Arena,
 	home:    runtime.Allocator,
+	waiting: sync.Sema,
 }
 
 Index_Arena :: struct {
@@ -195,6 +197,7 @@ index_push :: proc(share: ^Index_Share, path: string) {
 	for {
 		task.next = intrinsics.atomic_load(&share.stack)
 		if _, swapped := intrinsics.atomic_compare_exchange_strong(&share.stack, task.next, task); swapped {
+			sync.sema_post(&share.waiting)
 			return
 		}
 	}
@@ -337,17 +340,18 @@ index_share_run :: proc(share: ^Index_Share) {
 				return
 			}
 			patience += 1
-			if patience > 256 {
-				thread.yield()
-				patience = 0
-			} else {
+			if patience < 64 {
 				intrinsics.cpu_relax()
+			} else {
+				sync.sema_wait_with_timeout(&share.waiting, 200 * time.Microsecond)
 			}
 			continue
 		}
 		patience = 0
 		index_branch(share, task.path, task.chunk, &tokens)
-		intrinsics.atomic_add(&share.running, -1)
+		if intrinsics.atomic_sub(&share.running, 1) == 1 {
+			sync.sema_post(&share.waiting, 64)
+		}
 	}
 }
 

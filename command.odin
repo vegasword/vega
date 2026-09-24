@@ -90,6 +90,10 @@ Command :: enum u8 {
 	OnlySplit,
 	NextView,
 	PreviousView,
+	FocusLeft,
+	FocusRight,
+	FocusUp,
+	FocusDown,
 	GrowSplit,
 	ShrinkSplit,
 	ToggleCentered,
@@ -123,6 +127,7 @@ Command :: enum u8 {
 	NextDiagnostic,
 	PreviousDiagnostic,
 	OpenDiagnostics,
+	OpenProcesses,
 	InsertTodo,
 	InsertNote,
 	JumpBackward,
@@ -210,6 +215,10 @@ command_help := #partial [Command]string {
 	.CloseSplit            = "Close the current split",
 	.NextView              = "Focus the next split",
 	.PreviousView          = "Focus the previous split",
+	.FocusLeft             = "Focus the pane on the left",
+	.FocusRight            = "Focus the pane on the right",
+	.FocusUp               = "Focus the pane above",
+	.FocusDown             = "Focus the pane below",
 	.OnlySplit             = "Close every other pane",
 	.GrowSplit             = "Give this pane more room",
 	.ShrinkSplit           = "Give this pane less room",
@@ -244,6 +253,7 @@ command_help := #partial [Command]string {
 	.NextDiagnostic        = "Go to the next build error",
 	.PreviousDiagnostic    = "Go to the previous build error",
 	.OpenDiagnostics       = "List the build errors and warnings",
+	.OpenProcesses         = "List what is running in the background",
 	.InsertTodo            = "Insert a todo comment",
 	.InsertNote            = "Insert a note comment",
 	.JumpBackward          = "Go back in the navigation history",
@@ -300,7 +310,7 @@ default_keymap := map[Chord]Command {
 	{0, '~', {}}       = .SwitchCase,
 	{' ', 'R', {}}     = .ResetChange,
 	{' ', 'u', {}}     = .UpperCase,
-	{' ', 'l', {}}     = .LowerCase,
+	{' ', 'U', {}}     = .LowerCase,
 	{0, 'J', {}}       = .JoinLines,
 	{0, '>', {}}       = .IndentIn,
 	{0, '<', {}}       = .IndentOut,
@@ -343,10 +353,11 @@ default_keymap := map[Chord]Command {
 	{'w', 'q', {}}     = .CloseSplit,
 	{'w', 'o', {}}     = .OnlySplit,
 	{'w', 'w', {}}     = .NextView,
-	{'w', 'l', {}}     = .NextView,
-	{'w', 'h', {}}     = .PreviousView,
-	{'w', 'j', {}}     = .NextView,
-	{'w', 'k', {}}     = .PreviousView,
+	{'w', 'W', {}}     = .PreviousView,
+	{'w', 'h', {}}     = .FocusLeft,
+	{'w', 'l', {}}     = .FocusRight,
+	{'w', 'k', {}}     = .FocusUp,
+	{'w', 'j', {}}     = .FocusDown,
 	{'w', 'd', {}}     = .CloseBuffer,
 	{'w', '=', {}}     = .GrowSplit,
 	{'w', '-', {}}     = .ShrinkSplit,
@@ -380,6 +391,7 @@ default_keymap := map[Chord]Command {
 	{' ', 'w', {}}     = .OpenWorkspaces,
 	{' ', 'W', {}}     = .NewWorkspace,
 	{' ', 'E', {}}     = .OpenDiagnostics,
+	{0, 'p', {.Ctrl}}        = .OpenProcesses,
 	{0, 't', {.Ctrl}}        = .InsertTodo,
 	{0, 'n', {.Ctrl}}        = .InsertNote,
 	{' ', 'c', {}}     = .OpenSettings,
@@ -569,6 +581,7 @@ execute_command :: proc(editor: ^Editor, command: Command, count: int) {
 		editor.mode = .Insert
 	case .Yank:
 		yank_selections(editor, buffer)
+		editor.mode = .Normal
 		log.debugf("yanked %d selection(s)", len(buffer.selections))
 	case .PasteAfter:
 		paste(editor, buffer, true)
@@ -578,6 +591,7 @@ execute_command :: proc(editor: ^Editor, command: Command, count: int) {
 		replace_with_register(editor, buffer)
 	case .YankToClipboard:
 		yank_to_clipboard(editor, buffer)
+		editor.mode = .Normal
 	case .PasteFromClipboard:
 		paste_from_clipboard(editor, buffer, true)
 	case .PasteFromClipboardBefore:
@@ -697,6 +711,14 @@ execute_command :: proc(editor: ^Editor, command: Command, count: int) {
 		layout_focus(editor, 1)
 	case .PreviousView:
 		layout_focus(editor, -1)
+	case .FocusLeft:
+		layout_focus_direction(editor, .Left)
+	case .FocusRight:
+		layout_focus_direction(editor, .Right)
+	case .FocusUp:
+		layout_focus_direction(editor, .Up)
+	case .FocusDown:
+		layout_focus_direction(editor, .Down)
 	case .GrowSplit:
 		layout_resize(editor, 0.05)
 	case .ShrinkSplit:
@@ -768,6 +790,12 @@ execute_command :: proc(editor: ^Editor, command: Command, count: int) {
 		diagnostic_go(editor, 1)
 	case .PreviousDiagnostic:
 		diagnostic_go(editor, -1)
+	case .OpenProcesses:
+		if len(background_jobs(editor)) == 0 {
+			notify("Nothing is running in the background")
+			break
+		}
+		picker_open(editor, .Processes, "Background")
 	case .OpenDiagnostics:
 		if len(editor.diagnostics) == 0 {
 			notify("Nothing was reported by the last build")
@@ -795,6 +823,7 @@ execute_command :: proc(editor: ^Editor, command: Command, count: int) {
 	if command_mutates(command) && command != .Undo && command != .Redo && editor.mode != .Insert {
 		buffer_commit(buffer)
 	}
+	view_focus_poll(editor)
 	if command != .ViewTop && command != .ViewCenter && command != .ViewBottom {
 		editor_ensure_visible(editor)
 	}

@@ -368,8 +368,7 @@ index_cache_load :: proc(root: string) -> (blob: []u8, slot: int) {
 index_cache_save :: proc(index: ^Project_Index, root: string, slot: int) {
 	records := index.records
 	folders := 8
-	for path, modified in index.folders {
-		_ = modified
+	for path in index.folders {
 		folders += cache_align(16 + len(path))
 	}
 	total := 32 + folders

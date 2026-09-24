@@ -1,6 +1,10 @@
 #+build !windows
 package vega
 
+child_kill :: proc() -> bool {
+	return false
+}
+
 import "core:log"
 import "core:os"
 

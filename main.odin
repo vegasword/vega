@@ -80,6 +80,7 @@ active_painter: ^Painter
 screenshot_path: string
 frame_count: int
 screenshot_delay := 20
+drawn_minute := -1
 dialog_context: runtime.Context
 
 editor_buffer :: proc(editor: ^Editor) -> ^Buffer {
@@ -462,6 +463,8 @@ main :: proc() {
 		}
 	}
 	index_start(&editor.index, working_directory)
+	workspace_current = strings.clone(working_directory)
+	workspace_clock_load(working_directory)
 
 	append(&editor.views, View{})
 	layout_reset(editor)
@@ -575,14 +578,19 @@ main :: proc() {
 	previous_ticks := sdl.GetTicks()
 	for !(.Quit in editor.flags) {
 		event: sdl.Event
+		stirred := false
 		if !editor_animating(editor) && scripted_cursor >= len(scripted_keys) && screenshot_path == "" {
 			if sdl.WaitEventTimeout(&event, 400) {
 				handle_event(editor, event)
+				stirred = true
 			}
 			previous_ticks = sdl.GetTicks()
+		} else {
+			stirred = true
 		}
 		for sdl.PollEvent(&event) {
 			handle_event(editor, event)
+			stirred = true
 		}
 
 		dialog_drain(editor)
@@ -592,7 +600,10 @@ main :: proc() {
 		delta_time := clamp(f32(ticks - previous_ticks) / 1000, 0, 0.1)
 		previous_ticks = ticks
 		editor.time += delta_time
+		view_focus_poll(editor)
 		workspace_poll(editor)
+		workspace_tick(delta_time)
+		celebration_update(delta_time)
 		sfx_noise(editor)
 
 		if scripted_cursor < len(scripted_keys) {
@@ -616,6 +627,19 @@ main :: proc() {
 			log.infof("vsync %v", (.Vsync in editor.config.options))
 		}
 
+		if u64(sdl.GetTicks()) > git_checked_ms + 1000 {
+			git_checked_ms = u64(sdl.GetTicks())
+			git_watch(editor)
+		}
+		_, _, _, _, minute, _ := local_clock()
+		if minute != drawn_minute {
+			drawn_minute = minute
+			stirred = true
+		}
+		if !stirred && !editor_animating(editor) && shell_job == nil && index_job == nil {
+			continue
+		}
+
 		sdl.GetRenderOutputSize(editor.renderer, &editor.width, &editor.height)
 		background := editor.config.theme[.Background]
 		sdl.SetRenderDrawColorFloat(editor.renderer, background.r, background.g, background.b, 1)
@@ -630,6 +654,7 @@ main :: proc() {
 		if editor.picker.kind != .None {
 			draw_picker(editor)
 		}
+		draw_celebration(editor)
 		draw_toasts(editor)
 		painter_flush(&editor.painter)
 		sdl.RenderPresent(editor.renderer)
@@ -639,11 +664,6 @@ main :: proc() {
 				buffer_set_baseline(editor, buffer)
 				break
 			}
-		}
-
-		if u64(sdl.GetTicks()) > git_checked_ms + 1000 {
-			git_checked_ms = u64(sdl.GetTicks())
-			git_watch(editor)
 		}
 
 		if (.ConfigDirty in editor.flags) || (.SessionDirty in editor.flags) {
@@ -673,6 +693,7 @@ main :: proc() {
 
 	config_save(editor)
 	session_save(editor)
+	workspace_clock_save(editor.index.root)
 	log.info("vega exiting")
 	sdl.DestroyRenderer(editor.renderer)
 	sdl.DestroyWindow(editor.window)

@@ -146,6 +146,7 @@ Config :: struct {
 	click_volume:    f32,
 	click_kind:      u8,
 	delete_volume:   f32,
+	delete_kind:     u8,
 	noise_volume:    f32,
 	noise_tone:      f32,
 	user_name:       string,
@@ -387,6 +388,8 @@ config_load :: proc(editor: ^Editor) {
 			config.click_kind = u8(int_of(value))
 		case "delete_volume":
 			config.delete_volume = clamp(parse_number(value), 0, 1)
+		case "delete_kind":
+			config.delete_kind = u8(int_of(value))
 		case "noise_volume":
 			config.noise_volume = clamp(parse_number(value), 0, 1)
 		case "noise_tone":
@@ -454,6 +457,7 @@ config_save :: proc(editor: ^Editor) {
 	fmt.sbprintf(&builder, "click_volume %.2f\n", config.click_volume)
 	fmt.sbprintf(&builder, "click_kind %d\n", config.click_kind)
 	fmt.sbprintf(&builder, "delete_volume %.2f\n", config.delete_volume)
+	fmt.sbprintf(&builder, "delete_kind %d\n", config.delete_kind)
 	fmt.sbprintf(&builder, "noise_volume %.2f\n", config.noise_volume)
 	fmt.sbprintf(&builder, "noise_tone %.2f\n", config.noise_tone)
 	fmt.sbprintf(&builder, "user_name %s\n", config.user_name)

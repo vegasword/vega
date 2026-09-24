@@ -44,6 +44,11 @@ absence just falls back to the built-in themes. It builds as a windowed program,
 double clicking it never leaves a console behind, and the child processes it runs (git,
 the build scripts) are started hidden.
 
+An idle vega draws nothing at all. The loop blocks on the event queue, and a frame is
+only built when something actually changed: an event arrived, something is animating, a
+job is running, or the clock rolled over to the next minute — which is why it shows hours
+and minutes and not seconds. Sitting still, that is no presented frame and no GPU work.
+
 Launch it with no argument and it reopens the files, cursors and scroll of the last
 session, VS Code style. Everything is autosaved: any setting, colour, binding or cursor
 move marks the config and the session dirty and both files are written a tenth of a
@@ -57,6 +62,10 @@ anything under it is written, added, renamed or removed, and a fifth of a second
 the index rebuilds itself and any untouched buffer whose file changed underneath reloads,
 so a git checkout or a file dropped in from elsewhere needs nothing from you. Every root
 keeps its own files, cursors, scroll and pane layout, splits and all.
+
+Each workspace also keeps two clocks, one for how long it has been open and one that
+only runs while you are actually typing, and the workspace picker shows both beside the
+name, so switching projects tells you where the hours went.
 
 `space w` and `:ws` list
 the workspaces you have chosen and switch to the one you pick — new root, new index, its
@@ -85,10 +94,15 @@ as a column rather than as a row of thin bars. Panes are framed rather than shad
 one border each, thicker and accented on the focused one — and the text in an unfocused
 pane keeps its full colour instead of fading out.
 
+Two panes on the same file keep their own cursor and their own scroll: leaving a pane
+stores its selections, coming back restores them, and the pane you are not in shows
+where it left off as a dimmed cursor, so the same file in two panes reads as two places
+rather than one.
+
 There is one layout: a split tree you build with keys. `ctrl-w` is the window prefix, as
 in Helix: `ctrl-w v` splits into columns, `ctrl-w s` into rows, `ctrl-w q` closes the
-pane, `ctrl-w o` keeps only this one, `ctrl-w h j k l` move the focus, `ctrl-w d` closes
-the buffer, `ctrl-w =` and `ctrl-w -` resize. `ctrl-q` closes a pane directly, `ctrl-w w`
+pane, `ctrl-w o` keeps only this one, `ctrl-w h j k l` (or `i j k l`) move the focus,
+`ctrl-w d` closes the buffer, `ctrl-w =` and `ctrl-w -` resize. `ctrl-q` closes a pane directly, `ctrl-w w`
 cycles them, and the same commands live under the space menu. A single pane
 fills the window, so "full screen editing" is just the state you start in.
 
@@ -167,9 +181,10 @@ compiler output is parsed for `file(line:column) Error:` and for the `file:line:
 error:` shape the C compilers use, and every problem it names is drawn on its own line:
 a red bar in the gutter and a red underline under the code it points at, the name at the
 column it blames when there is one, the statement otherwise. Nothing is written into the
-buffer: put the cursor on such a line and the message itself takes over the top bar in
-the same red, so the code keeps its own width and the error is one glance away. The
-cursor lands on the first one immediately, `g n` and `g p` walk the rest, each one
+buffer: put the cursor on such a line and the message opens in a red bordered popup just
+under it, wrapped, so the code keeps its own width. The
+cursor lands on the first one immediately and the message itself opens in red under it,
+`g n` and `g p` walk the rest, each one
 opening the file it belongs to, `space E` lists them all in a picker that previews each
 as you move, and the next build clears them.
 
@@ -185,8 +200,10 @@ and the last line of output; the full output goes to the log rather than into a 
 Output from a script or from `:sh` no longer flies past in a toast: it opens a panel
 under the cursor, over the buffer, the way Helix shows command output. The command runs
 on its own thread, so the editor stays live while it works and the panel fills in when it
-finishes; while it runs, a braille spinner and the command sit in the status bar rather
-than a placeholder panel in the way. It does not take the keyboard hostage: every key still edits and moves as
+finishes; while it runs the status bar says `1 job, ctrl-p`, and `ctrl-p` lists what you
+started — only that, never vega's own index or watcher — with delete killing the one you
+pick. A build that ends well says so: Todd appears in the middle of
+the window under "It just work !", with a couple of hundred particles thrown out of him. It does not take the keyboard hostage: every key still edits and moves as
 usual, only `ctrl-d` and `ctrl-u` are borrowed to page through the output (the wheel
 works too), and escape is what closes it, so it stays put while you keep working. Its
 border is green or red depending on the exit code. Toasts themselves now wrap and keep their newlines, so a
