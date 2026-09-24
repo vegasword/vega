@@ -36,7 +36,6 @@ Settings :: struct {
 	chooser_index:   int,
 	chooser_query:   [dynamic]u8,
 	saved_buffer:    int,
-	editing_theme:   bool,
 }
 
 Field_Kind :: enum u8 {
@@ -44,7 +43,7 @@ Field_Kind :: enum u8 {
 	Number,
 	Real,
 	Choice,
-	Color,
+	Text,
 	Action,
 }
 
@@ -56,7 +55,6 @@ Field :: struct {
 	number:  ^int,
 	real:    ^f32,
 	choice:  ^u8,
-	color:   ^[4]f32,
 	choices: []string,
 	low:     f32,
 	high:    f32,
@@ -84,6 +82,9 @@ keymap_layers := []Keymap_Layer {
 	{0, {.Ctrl}, "ctrl"},
 	{0, {.Alt}, "alt"},
 	{0, {.Ctrl, .Shift}, "ctrl shift"},
+	{0, {.Ctrl, .Alt}, "ctrl alt"},
+	{0, {.Alt, .Shift}, "alt shift"},
+	{0, {.Ctrl, .Alt, .Shift}, "ctrl alt shift"},
 	{'g', {}, "g"},
 	{'m', {}, "m"},
 	{'z', {}, "z"},
@@ -244,6 +245,7 @@ settings_fields :: proc(editor: ^Editor) -> []Field {
 		append(&fields, Field{label = "Pair quotes", help = option_help[.PairQuotes], kind = .Toggle, option = .PairQuotes})
 		append(&fields, Field{label = "Pair single quotes", help = option_help[.PairSingles], kind = .Toggle, option = .PairSingles})
 		append(&fields, Field{label = "Pair backticks", help = option_help[.PairBackticks], kind = .Toggle, option = .PairBackticks})
+		append(&fields, Field{label = "Your name", help = "Signs the todo and note comments of ctrl-t and ctrl-n", kind = .Text, action = .None})
 	case .View:
 		append(&fields, Field{label = "Centred square", help = option_help[.Centered], kind = .Toggle, option = .Centered})
 		append(&fields, Field{label = "Square ratio", help = "How much taller than wide the pane may be before the square shrinks", kind = .Real, real = &config.aspect_ratio, low = 1, high = 2, step = 0.05})
@@ -270,17 +272,14 @@ settings_fields :: proc(editor: ^Editor) -> []Field {
 		append(&fields, Field{label = "Click in normal", help = option_help[.ClickNormal], kind = .Toggle, option = .ClickNormal})
 		append(&fields, Field{label = "Click in insert", help = option_help[.ClickInsert], kind = .Toggle, option = .ClickInsert})
 		append(&fields, Field{label = "Click in select", help = option_help[.ClickSelect], kind = .Toggle, option = .ClickSelect})
+		append(&fields, Field{label = "Delete sound", help = option_help[.DeleteSound], kind = .Toggle, option = .DeleteSound})
+		append(&fields, Field{label = "Delete volume", help = "How loud a deletion is", kind = .Real, real = &config.delete_volume, low = 0, high = 1, step = 0.05})
+		append(&fields, Field{label = "Brown noise", help = option_help[.BrownNoise], kind = .Toggle, option = .BrownNoise})
+		append(&fields, Field{label = "Noise volume", help = "How loud the brown noise is", kind = .Real, real = &config.noise_volume, low = 0, high = 1, step = 0.05})
+		append(&fields, Field{label = "Noise tone", help = "Sweeps the corner from 50 Hz to 800 Hz, the middle of the slider being 200 Hz", kind = .Real, real = &config.noise_tone, low = 0, high = 1, step = 0.05})
 	case .Appearance:
-		if editor.settings.editing_theme {
-			append(&fields, Field{label = "Done editing", help = fmt.tprintf("back to appearance, editing %s", config.theme_name), kind = .Action, action = .None})
-			for slot in Color_Slot {
-				append(&fields, Field{label = fmt.tprintf("%v", slot), help = "Enter opens the colour picker", kind = .Color, color = &config.theme[slot]})
-			}
-			break
-		}
 		append(&fields, Field{label = "Font size", help = "Rebuilds the glyph atlas live", kind = .Real, real = &config.font_size, low = 8, high = 48, step = 1})
 		append(&fields, Field{label = "Theme preset", help = "Browse the themes with a live preview", kind = .Action, action = .None})
-		append(&fields, Field{label = "Edit this theme", help = "Change the colours of the current theme one by one", kind = .Action, action = .None})
 		append(&fields, Field{label = "Ligatures", help = option_help[.Ligatures], kind = .Toggle, option = .Ligatures})
 		append(&fields, Field{label = "True black", help = option_help[.TrueBlack], kind = .Toggle, option = .TrueBlack})
 	case .Keys:
@@ -298,8 +297,8 @@ field_value_text :: proc(editor: ^Editor, field: Field) -> string {
 		return fmt.tprintf("%.2f", field.real^)
 	case .Choice:
 		return field.choices[min(int(field.choice^), len(field.choices) - 1)]
-	case .Color:
-		return color_to_hex(field.color^, context.temp_allocator)
+	case .Text:
+		return editor.config.user_name == "" ? "unset" : editor.config.user_name
 	case .Action:
 		return "open"
 	}
@@ -330,29 +329,25 @@ field_adjust :: proc(editor: ^Editor, field: Field, delta: int) {
 	case .Choice:
 		count := u8(len(field.choices))
 		field.choice^ = u8((int(field.choice^) + delta + len(field.choices)) % int(count))
-	case .Color:
-		color_picker_open(editor, field.color, field.label)
-	case .Action:
+	case .Text, .Action:
 	}
 	editor.flags += {.ConfigDirty}
 	log.debugf("setting %s is now %s", field.label, field_value_text(editor, field))
 }
 
 field_activate :: proc(editor: ^Editor, field: Field) {
-	if field.kind == .Color {
-		color_picker_open(editor, field.color, field.label)
-		return
-	}
-	switch field.label {
-	case "theme preset":
-		picker_open(editor, .Themes, "Theme")
-	case "edit this theme":
-		editor.settings.editing_theme = true
-		editor.settings.field = 0
-	case "done editing":
-		editor.settings.editing_theme = false
-		editor.settings.field = 0
-	case:
+	switch field.kind {
+	case .Text:
+		settings_close(editor)
+		prompt_open(editor, .UserName)
+		clear(&editor.prompt_input)
+		append(&editor.prompt_input, editor.config.user_name)
+		editor.prompt_cursor = len(editor.prompt_input)
+	case .Action:
+		if field.label == "Theme preset" {
+			picker_open(editor, .Themes, "Theme")
+		}
+	case .Toggle, .Number, .Real, .Choice:
 		field_adjust(editor, field, 1)
 	}
 }
@@ -613,9 +608,6 @@ draw_settings :: proc(editor: ^Editor) {
 		push_text(painter, value_x, y + line_height * 0.1, field_value_text(editor, field), theme[.String])
 
 		switch field.kind {
-		case .Color:
-			swatch := [4]f32{field.color[0], field.color[1], field.color[2], 1}
-			push_rect(painter, value_x + cell * 10, y + line_height * 0.15, cell * 8, line_height * 0.85, swatch)
 		case .Real, .Number:
 			low := field.kind == .Real ? field.low : f32(int(field.low))
 			high := field.kind == .Real ? field.high : f32(int(field.high))
@@ -624,7 +616,7 @@ draw_settings :: proc(editor: ^Editor) {
 			push_rect(painter, value_x + cell * 10, y + line_height * 0.5, track, 2, theme[.Gutter])
 			ratio := clamp((value - low) / max(0.001, high - low), 0, 1)
 			push_rect(painter, value_x + cell * 10 + track * ratio - 2, y + line_height * 0.2, 4, line_height * 0.8, theme[.Accent])
-		case .Toggle, .Choice, .Action:
+		case .Toggle, .Choice, .Text, .Action:
 		}
 	}
 

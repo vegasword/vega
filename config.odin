@@ -62,6 +62,8 @@ Option :: enum u8 {
 	ClickNormal,
 	ClickInsert,
 	ClickSelect,
+	DeleteSound,
+	BrownNoise,
 	MenuHints,
 	TrueBlack,
 	Ligatures,
@@ -95,6 +97,8 @@ option_names := [Option]string {
 	.ClickNormal      = "click_normal",
 	.ClickInsert      = "click_insert",
 	.ClickSelect      = "click_select",
+	.DeleteSound      = "delete_sound",
+	.BrownNoise       = "brown_noise",
 	.MenuHints        = "menu_hints",
 	.TrueBlack        = "true_black",
 	.Ligatures        = "ligatures",
@@ -126,6 +130,8 @@ option_help := [Option]string {
 	.ClickNormal      = "Click in normal mode",
 	.ClickInsert      = "Click in insert mode",
 	.ClickSelect      = "Click in select mode",
+	.DeleteSound      = "Play a sound when something is deleted",
+	.BrownNoise       = "Play a soft brown noise while you work",
 	.MenuHints        = "Show a menu when a prefix key is pressed",
 	.TrueBlack        = "Force a dark theme background to pure black",
 	.Ligatures        = "Let the font join -> and == into one glyph",
@@ -139,6 +145,10 @@ Config :: struct {
 	aspect_ratio:    f32,
 	click_volume:    f32,
 	click_kind:      u8,
+	delete_volume:   f32,
+	noise_volume:    f32,
+	noise_tone:      f32,
+	user_name:       string,
 	indent_width:    int,
 	scroll_off:      int,
 	cursor_speed:    f32,
@@ -285,6 +295,9 @@ default_config :: proc() -> Config {
 		aspect_ratio = 1.2,
 		click_volume = 0.6,
 		click_kind = 0,
+		delete_volume = 0.6,
+		noise_volume = 0.35,
+		noise_tone = 0.5,
 		indent_width = 4,
 		scroll_off = 5,
 		cursor_speed = 48,
@@ -372,6 +385,15 @@ config_load :: proc(editor: ^Editor) {
 			config.click_volume = clamp(parse_number(value), 0, 1)
 		case "click_kind":
 			config.click_kind = u8(int_of(value))
+		case "delete_volume":
+			config.delete_volume = clamp(parse_number(value), 0, 1)
+		case "noise_volume":
+			config.noise_volume = clamp(parse_number(value), 0, 1)
+		case "noise_tone":
+			config.noise_tone = clamp(parse_number(value), 0, 1)
+		case "user_name":
+			delete(config.user_name)
+			config.user_name = strings.clone(value)
 		case "line_spacing":
 			config.line_spacing = parse_number(value)
 		case "indent_width":
@@ -431,6 +453,10 @@ config_save :: proc(editor: ^Editor) {
 	fmt.sbprintf(&builder, "aspect_ratio %.2f\n", config.aspect_ratio)
 	fmt.sbprintf(&builder, "click_volume %.2f\n", config.click_volume)
 	fmt.sbprintf(&builder, "click_kind %d\n", config.click_kind)
+	fmt.sbprintf(&builder, "delete_volume %.2f\n", config.delete_volume)
+	fmt.sbprintf(&builder, "noise_volume %.2f\n", config.noise_volume)
+	fmt.sbprintf(&builder, "noise_tone %.2f\n", config.noise_tone)
+	fmt.sbprintf(&builder, "user_name %s\n", config.user_name)
 	fmt.sbprintf(&builder, "indent_width %d\n", config.indent_width)
 	fmt.sbprintf(&builder, "scroll_off %d\n", config.scroll_off)
 	fmt.sbprintf(&builder, "cursor_speed %.1f\n", config.cursor_speed)

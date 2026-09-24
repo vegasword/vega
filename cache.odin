@@ -209,6 +209,48 @@ cache_record :: proc(
 	return record
 }
 
+cache_sound :: proc(file: Cached_File, text_length, symbol_count, definition_count, reference_count: int) -> bool {
+	within :: proc(offset, length, limit: int) -> bool {
+		return offset >= 0 && length >= 0 && offset + length <= limit
+	}
+	if len(file.text) != text_length || len(file.symbols) != symbol_count {
+		return false
+	}
+	for symbol in file.symbols {
+		if !within(int(symbol.name_offset), int(symbol.name_length), text_length) {
+			return false
+		}
+		if !within(int(symbol.signature_off), int(symbol.signature_len), text_length) {
+			return false
+		}
+		if int(symbol.offset) > text_length || int(symbol.kind) >= len(Symbol_Kind) {
+			return false
+		}
+	}
+	for entry in file.unit.entries {
+		if !within(int(entry.name_offset), int(entry.name_length), text_length) {
+			return false
+		}
+		if !within(int(entry.definition_start), int(entry.definition_count), definition_count) {
+			return false
+		}
+		if !within(int(entry.reference_start), int(entry.reference_count), reference_count) {
+			return false
+		}
+	}
+	for index in file.unit.definitions {
+		if int(index) >= symbol_count {
+			return false
+		}
+	}
+	for offset in file.unit.references {
+		if int(offset) > text_length {
+			return false
+		}
+	}
+	return true
+}
+
 cache_parse :: proc(blob: []u8, cursor: ^int) -> (path: string, file: Cached_File, language: Language, ok: bool) {
 	start := cursor^
 	file.modified = cache_number(blob, cursor, i64)
@@ -240,6 +282,11 @@ cache_parse :: proc(blob: []u8, cursor: ^int) -> (path: string, file: Cached_Fil
 		entries     = slice.reinterpret([]Cached_Entry, entries),
 		definitions = slice.reinterpret([]u32, definitions),
 		references  = slice.reinterpret([]u32, references),
+	}
+	if !cache_sound(file, text_length, symbol_count, definition_count, reference_count) {
+		log.warnf("a cached record for %s did not hold together, reading it again", string(path_bytes))
+		cursor^ = start + record_length
+		return "", {}, .Plain, false
 	}
 	file.record = blob[start:start + record_length]
 	cursor^ = start + record_length
@@ -285,8 +332,12 @@ index_cache_load :: proc(root: string) -> (blob: []u8, slot: int) {
 	folders_offset := int(cache_number(blob, &header, i64))
 	cursor := 32
 	for cursor < folders_offset && cursor < len(blob) {
+		before := cursor
 		path, file, language, ok := cache_parse(blob, &cursor)
 		if !ok {
+			if cursor > before {
+				continue
+			}
 			break
 		}
 		index_cache[path] = file
@@ -354,7 +405,7 @@ index_cache_save :: proc(index: ^Project_Index, root: string, slot: int) {
 		copy(blob[cursor:], transmute([]u8)path)
 		cursor = start + cache_align(16 + len(path))
 	}
-	if os.write_entire_file(index_cache_path(root, 1 - slot), blob[:cursor]) != nil {
+	if !scan_replace(index_cache_path(root, 1 - slot), blob[:cursor]) {
 		log.debug("the index cache could not be written")
 		return
 	}

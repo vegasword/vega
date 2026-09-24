@@ -43,7 +43,6 @@ shell_run :: proc(editor: ^Editor, command_line: string) {
 	}
 	job.worker.data = job
 	shell_job = job
-	output_show(editor, fmt.tprintf("%s running", command_line), "Working, the editor stays yours", false)
 	thread.start(job.worker)
 }
 

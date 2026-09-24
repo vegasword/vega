@@ -1,4 +1,4 @@
-#+feature dynamic-literals
+﻿#+feature dynamic-literals
 package vega
 
 import "core:log"
@@ -43,17 +43,6 @@ color_from_hex :: proc(text: string) -> ([4]f32, bool) {
 	return {f32((value >> 16) & 0xff) / 255, f32((value >> 8) & 0xff) / 255, f32(value & 0xff) / 255, 1}, true
 }
 
-color_to_hex :: proc(color: [4]f32, allocator := context.allocator) -> string {
-	digits := "0123456789abcdef"
-	output := make([]u8, 7, allocator)
-	output[0] = '#'
-	for channel in 0 ..< 3 {
-		value := u8(clamp(color[channel], 0, 1) * 255 + 0.5)
-		output[1 + channel * 2] = digits[value >> 4]
-		output[2 + channel * 2] = digits[value & 0xf]
-	}
-	return string(output)
-}
 
 baked_themes := #load_directory("themes")
 

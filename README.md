@@ -1,4 +1,4 @@
-# vega
+?# vega
 
 I vibe-cooked this at work because I was too bored of Helix and my own job.
 
@@ -52,7 +52,13 @@ files — `vega.conf`, `vega.log` and one session per workspace under `sessions`
 the folder SDL calls the preference path (`%APPDATA%\vega\vega` on Windows,
 `~/.local/share/vega/vega` elsewhere), never in the project you are editing; `:log`
 prints where. The working directory is the project root: it is walked and indexed at
-startup, and every root keeps its own files, cursors and scroll. `space w` and `:ws` list
+startup and watched from then on: `ReadDirectoryChangesW` on the root tells vega when
+anything under it is written, added, renamed or removed, and a fifth of a second later
+the index rebuilds itself and any untouched buffer whose file changed underneath reloads,
+so a git checkout or a file dropped in from elsewhere needs nothing from you. Every root
+keeps its own files, cursors, scroll and pane layout, splits and all.
+
+`space w` and `:ws` list
 the workspaces you have chosen and switch to the one you pick — new root, new index, its
 own session — and `:ws some/path` goes straight there. Nothing is ever added behind your
 back from where the executable happens to sit: launched with no file, vega reopens the
@@ -73,6 +79,12 @@ reference, its animated scroll and its cursor.
 
 ## Panes, not layout modes
 
+Every cursor is drawn the same, whichever one you call primary: the shape you chose in
+the settings, with the character under it painted through, so a column of cursors reads
+as a column rather than as a row of thin bars. Panes are framed rather than shaded —
+one border each, thicker and accented on the focused one — and the text in an unfocused
+pane keeps its full colour instead of fading out.
+
 There is one layout: a split tree you build with keys. `ctrl-w` is the window prefix, as
 in Helix: `ctrl-w v` splits into columns, `ctrl-w s` into rows, `ctrl-w q` closes the
 pane, `ctrl-w o` keeps only this one, `ctrl-w h j k l` move the focus, `ctrl-w d` closes
@@ -81,7 +93,7 @@ cycles them, and the same commands live under the space menu. A single pane
 fills the window, so "full screen editing" is just the state you start in.
 
 Centring is separate from splitting, because it is about reading shape rather than
-arrangement: `ctrl-z`, `space l` or `:centered` holds the text in a **square** centred in
+arrangement: `ctrl-z` or `:centered` holds the text in a **square** centred in
 the pane, unless the pane is taller than it is wide, where centring would only waste the
 screen and is skipped. The side is the smaller of the pane's width and its height times the square
 ratio (1.2 by default, 1 to 2 in the View settings), snapped down to a whole number of
@@ -111,14 +123,19 @@ Changes `i a I A o O`, `d c y p P R`, `r` replace characters, `~` switch case, `
 
 `w`, `e` and `b` select the word they land on rather than dragging a selection behind
 them, which is the one Helix habit vega does not keep: a motion leaves you holding a
-word, ready for `d`, `c` or `space U`. Going backwards puts the cursor on the head of the
+word, ready for `d`, `c` or `space u`. Going backwards puts the cursor on the head of the
 word, so `b` and `B` keep walking back rather than sitting on the same word.
 
 Delete `Delete` removes the selection in normal mode and the character ahead in insert
-mode, `ctrl-backspace` and `ctrl-delete` eat a word at a time in either. `space U` upper
-cases the selection, `space u` lower cases it, `~` switches it, and `:cap` / `:uncap` do
-the same from the command line. `ctrl-c` comments or uncomments the selected lines with
-the language's own marker, deciding by whether every non-blank line is already commented.
+mode, `ctrl-backspace` and `ctrl-delete` eat a word at a time in either; `d` always drops
+you back in normal mode and can knock, if you let it. `space u` upper cases the
+selection, `space l` lower cases it, `~` switches it, and `:cap` / `:uncap` do the same
+from the command line. `x` takes the row it is on and nothing more, so deleting a line
+selection leaves the line empty rather than pulling the next one up, and `R` puts the
+register over whatever is selected. `ctrl-c` comments or uncomments the selected lines
+with the language's own marker, deciding by whether every non-blank line is already
+commented, while `ctrl-t` and `ctrl-n` open a `//TODO(you):` or `//NOTE(you):` at the end
+of the line and leave you typing in it, the name coming from the Editor settings.
 
 With several selections in hand, `n` drops the first one and `N` the last, so a `s`
 search can be peeled down to the occurrences you actually want; with a single selection
@@ -139,18 +156,22 @@ place rather than when you move: goto definition, goto references, `gg` and `ge`
 opening anything from a picker each push where you were, with the file and the offset, so
 back comes home across files. `ctrl-i` in insert mode still leaves insert mode.
 
-`ctrl-h` and `ctrl-l` step through buffers, `gb` and `gB` do the same from
-the goto prefix, `gn` and `gp` jump to the next and previous definition in the file,
-`ctrl-j` and `ctrl-k` (or `space n` and `space p`) jump between changes against git
+Closing a buffer drops you back on the one you came from rather than on whatever index
+happens to be next. `ctrl-h` and `ctrl-l` step through buffers, `gb` and `gB` do the same from
+the goto prefix, `gf` and `gF` jump to the next and previous definition in the file,
+`ctrl-j` and `ctrl-k` (or `space n` and `space N`) jump between changes against git
 HEAD, which the gutter marks as you edit.
 
 A build that fails comes back into the buffer rather than into a wall of text. The
 compiler output is parsed for `file(line:column) Error:` and for the `file:line:col:
 error:` shape the C compilers use, and every problem it names is drawn on its own line:
-a bar in the gutter, the line tinted, the offending column underlined, and the message
-itself right aligned on that line, over the tail of the code so it stays readable. The
-cursor lands on the first one immediately, `g N` and `g P` walk the rest, each one
-opening the file it belongs to, and the next build clears them.
+a red bar in the gutter and a red underline under the code it points at, the name at the
+column it blames when there is one, the statement otherwise. Nothing is written into the
+buffer: put the cursor on such a line and the message itself takes over the top bar in
+the same red, so the code keeps its own width and the error is one glance away. The
+cursor lands on the first one immediately, `g n` and `g p` walk the rest, each one
+opening the file it belongs to, `space E` lists them all in a picker that previews each
+as you move, and the next build clears them.
 
 Running `ctrl-s` writes, `ctrl-m` builds, `ctrl-r` runs, `ctrl-shift-c` cleans, and
 `:sh any command`, or `:! any command`, runs anything else. Which scripts those keys
@@ -164,7 +185,8 @@ and the last line of output; the full output goes to the log rather than into a 
 Output from a script or from `:sh` no longer flies past in a toast: it opens a panel
 under the cursor, over the buffer, the way Helix shows command output. The command runs
 on its own thread, so the editor stays live while it works and the panel fills in when it
-finishes. It does not take the keyboard hostage: every key still edits and moves as
+finishes; while it runs, a braille spinner and the command sit in the status bar rather
+than a placeholder panel in the way. It does not take the keyboard hostage: every key still edits and moves as
 usual, only `ctrl-d` and `ctrl-u` are borrowed to page through the output (the wheel
 works too), and escape is what closes it, so it stays put while you keep working. Its
 border is green or red depending on the exit code. Toasts themselves now wrap and keep their newlines, so a
@@ -249,6 +271,10 @@ marked with a faint `↪`, so an indented statement never slides back to the lef
 the wrap arithmetic, the row count and the visual motions all read that same indent.
 
 ## The index instead of a language server
+
+The index also feeds the colours: a name the project declares as a struct, enum, union or
+distinct type is highlighted as a type wherever it appears, not only where the language's
+own keywords are, so `Buffer` and `Rect` read like `int` and `f32`.
 
 `index.odin` walks the project, tokenizes every `.odin`, C and GLSL file once, and keeps
 two maps: name to definitions and name to every identifier occurrence. That is enough
@@ -361,13 +387,17 @@ unstyled.
 View carries the centred square and its ratio, soft wrap, whitespace, the diff gutter,
 arrow keys, fullscreen, smooth scroll and line spacing. Editor carries the indent, the
 gutter, the menu hints and auto pairs with a checkbox per pair — `( )`, `[ ]`, `{ }`,
-quotes, single quotes, backticks. Audio carries the key
-clicks, their volume, which keyboard they are sampled from and which modes click at all,
-insert only by default. Cursor carries the animation, its
-speed and the three cursor shapes. Appearance carries the font size, the theme preset
-picker, bold, ligatures and true black, and **edit this theme** turns the same section
-into the palette: every colour with its hex value and a swatch, Enter opening the colour
-picker, and *done editing* at the top to come back.
+quotes, single quotes, backticks, and the name that signs your todo comments. Audio
+carries the key clicks, their volume, which keyboard they are sampled from and which
+modes click at all, insert only by default, a sound on every deletion, and a brown noise
+generator with its own volume and tone: white noise integrated into the 6 dB an octave
+slope that makes brown noise, with a leak so the walk cannot wander off and a DC blocker
+after it, then one low pass whose corner the tone slider sweeps from 50 Hz to 800 Hz, the
+middle of the slider sitting at 200 Hz where it starts. Level is compensated across that
+sweep, so the slider changes the colour of the noise and not how loud it is. It is kept
+two seconds ahead of the speaker so the editor can doze between key presses without the
+sound thinning out. Cursor carries the animation, its speed and the three cursor shapes. Appearance
+carries the font size, the theme preset picker, ligatures and true black.
 
 Appearance shrinks the panel to six tenths of the window and render a sample
 buffer beside it rather than your own file, a short Odin listing with keywords, types,
@@ -394,9 +424,6 @@ four characters of context either side and cached by their text, and a table of 
 ASCII characters can join at all keeps the common case to an array lookup. True black
 forces the background of a dark theme to pure black and dims the panels to match, for
 OLED screens.
-
-Enter on a colour opens the colour picker: a saturation and value square you drag, a hue
-strip, and a hex field you type into. That popup is the only place vega uses the mouse.
 
 ## The keymap editor
 

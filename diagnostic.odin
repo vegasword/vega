@@ -96,7 +96,14 @@ diagnostic_go :: proc(editor: ^Editor, delta: int) {
 		notify("No errors to visit")
 		return
 	}
-	editor.diagnostic_cursor = (editor.diagnostic_cursor + delta + len(editor.diagnostics)) % len(editor.diagnostics)
+	diagnostic_show(editor, (editor.diagnostic_cursor + delta + len(editor.diagnostics)) % len(editor.diagnostics))
+}
+
+diagnostic_show :: proc(editor: ^Editor, index: int) {
+	if len(editor.diagnostics) == 0 {
+		return
+	}
+	editor.diagnostic_cursor = clamp(index, 0, len(editor.diagnostics) - 1)
 	entry := editor.diagnostics[editor.diagnostic_cursor]
 	output_close(editor)
 	jump_push(editor)
@@ -108,46 +115,55 @@ diagnostic_go :: proc(editor: ^Editor, delta: int) {
 	notify(fmt.tprintf("%d of %d  %s", editor.diagnostic_cursor + 1, len(editor.diagnostics), entry.message))
 }
 
-draw_diagnostic_mark :: proc(editor: ^Editor, buffer: ^Buffer, line: int, gutter, x, y: f32) {
-	entry, found := diagnostic_at(editor, buffer, line)
-	if !found {
-		return
-	}
-	painter := &editor.painter
-	cell := painter.cell_width
-	line_height := line_height_of(editor)
-	color := entry.warning ? editor.active_theme[.Number] : editor.active_theme[.Directive]
-	push_rect(painter, gutter, y, x - gutter + cell, line_height, color * [4]f32{1, 1, 1, 0.12})
-	push_rect(painter, gutter - cell * 1.6, y + 1, cell * 0.35, line_height - 2, color)
-	if entry.column > 0 {
-		wave := gutter + f32(entry.column - 1) * cell
-		push_line(painter, wave, y + line_height - 2, min(wave + cell * 3, x), y + line_height - 2, 1.5, color)
-	}
+DIAGNOSTIC_RED :: [4]f32{0.91, 0.27, 0.31, 1}
+DIAGNOSTIC_AMBER :: [4]f32{0.93, 0.68, 0.24, 1}
+
+diagnostic_color :: proc(entry: Diagnostic) -> [4]f32 {
+	return entry.warning ? DIAGNOSTIC_AMBER : DIAGNOSTIC_RED
 }
 
-draw_diagnostic_message :: proc(editor: ^Editor, buffer: ^Buffer, line: int, gutter, x, y: f32, room: f32) {
+diagnostic_span :: proc(buffer: ^Buffer, line, column: int) -> (start, end: int) {
+	first, last := buffer_line_bounds(buffer, line)
+	if column > 0 && first + column - 1 < last {
+		word, at := word_at(buffer.text[:], first + column - 1)
+		if word != "" {
+			return at - first, at - first + len(word)
+		}
+	}
+	text := string(buffer.text[first:last])
+	indent := 0
+	for indent < len(text) && (text[indent] == ' ' || text[indent] == '\t') {
+		indent += 1
+	}
+	return indent, len(text)
+}
+
+draw_diagnostic_mark :: proc(editor: ^Editor, buffer: ^Buffer, line: int, gutter, y: f32, tab_width, scroll_x: int) {
 	entry, found := diagnostic_at(editor, buffer, line)
 	if !found {
 		return
 	}
 	painter := &editor.painter
-	theme := editor.active_theme
 	cell := painter.cell_width
 	line_height := line_height_of(editor)
-	color := entry.warning ? theme[.Number] : theme[.Directive]
-	right := x + room
-	fits := int((right - gutter) / cell) - 4
-	if fits < 4 {
+	color := diagnostic_color(entry)
+	push_rect(painter, gutter - cell * 1.6, y + 1, cell * 0.35, line_height - 2, color)
+
+	start, end := diagnostic_span(buffer, line, entry.column)
+	first, _ := buffer_line_bounds(buffer, line)
+	from := visual_column(buffer, first, first + start, tab_width) - scroll_x
+	to := visual_column(buffer, first, first + end, tab_width) - scroll_x
+	if to <= 0 || to <= from {
 		return
 	}
-	message := entry.message
-	columns := len(message)
-	if columns > fits {
-		message = strings.concatenate({message[:fits - 1], "…"}, context.temp_allocator)
-		columns = fits
+	left := gutter + f32(max(0, from)) * cell
+	push_line(painter, left, y + line_height - 1.5, gutter + f32(to) * cell, y + line_height - 1.5, 1.5, color)
+}
+
+diagnostic_under_cursor :: proc(editor: ^Editor) -> (Diagnostic, bool) {
+	if len(editor.diagnostics) == 0 {
+		return {}, false
 	}
-	start := right - f32(columns + 1) * cell
-	push_rect(painter, start - cell, y, right - start + cell, line_height, theme[.Background])
-	push_rect(painter, start - cell, y, cell * 0.2, line_height, color)
-	push_text(painter, start, y, message, color)
+	buffer := editor_buffer(editor)
+	return diagnostic_at(editor, buffer, buffer_line_of(buffer, buffer_primary(buffer).head))
 }

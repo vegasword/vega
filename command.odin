@@ -122,6 +122,9 @@ Command :: enum u8 {
 	NewWorkspace,
 	NextDiagnostic,
 	PreviousDiagnostic,
+	OpenDiagnostics,
+	InsertTodo,
+	InsertNote,
 	JumpBackward,
 	JumpForward,
 }
@@ -240,6 +243,9 @@ command_help := #partial [Command]string {
 	.NewWorkspace          = "Add a workspace from a folder",
 	.NextDiagnostic        = "Go to the next build error",
 	.PreviousDiagnostic    = "Go to the previous build error",
+	.OpenDiagnostics       = "List the build errors and warnings",
+	.InsertTodo            = "Insert a todo comment",
+	.InsertNote            = "Insert a note comment",
 	.JumpBackward          = "Go back in the navigation history",
 	.JumpForward           = "Go forward in the navigation history",
 }
@@ -293,8 +299,8 @@ default_keymap := map[Chord]Command {
 	{0, 'r', {}}       = .ReplaceCharacter,
 	{0, '~', {}}       = .SwitchCase,
 	{' ', 'R', {}}     = .ResetChange,
-	{' ', 'U', {}}     = .UpperCase,
-	{' ', 'u', {}}     = .LowerCase,
+	{' ', 'u', {}}     = .UpperCase,
+	{' ', 'l', {}}     = .LowerCase,
 	{0, 'J', {}}       = .JoinLines,
 	{0, '>', {}}       = .IndentIn,
 	{0, '<', {}}       = .IndentOut,
@@ -355,10 +361,10 @@ default_keymap := map[Chord]Command {
 	{'g', 'l', {}}     = .GotoLineEnd,
 	{'g', 'd', {}}     = .GotoDefinition,
 	{'g', 'r', {}}     = .GotoReferences,
-	{'g', 'n', {}}     = .NextFunction,
-	{'g', 'p', {}}     = .PreviousFunction,
-	{'g', 'N', {}}     = .NextDiagnostic,
-	{'g', 'P', {}}     = .PreviousDiagnostic,
+	{'g', 'f', {}}     = .NextFunction,
+	{'g', 'F', {}}     = .PreviousFunction,
+	{'g', 'n', {}}     = .NextDiagnostic,
+	{'g', 'p', {}}     = .PreviousDiagnostic,
 	{'g', 'b', {}}     = .NextBuffer,
 	{'g', 'B', {}}     = .PreviousBuffer,
 	{'m', 'm', {}}     = .MatchBracket,
@@ -373,18 +379,20 @@ default_keymap := map[Chord]Command {
 	{' ', 'k', {}}     = .HoverSymbol,
 	{' ', 'w', {}}     = .OpenWorkspaces,
 	{' ', 'W', {}}     = .NewWorkspace,
+	{' ', 'E', {}}     = .OpenDiagnostics,
+	{0, 't', {.Ctrl}}        = .InsertTodo,
+	{0, 'n', {.Ctrl}}        = .InsertNote,
 	{' ', 'c', {}}     = .OpenSettings,
 	{' ', 'v', {}}     = .SplitVertical,
 	{' ', 'x', {}}     = .SplitHorizontal,
 	{' ', 'q', {}}     = .CloseSplit,
-	{' ', 'l', {}}     = .ToggleCentered,
 	{' ', 'o', {}}     = .OnlySplit,
 	{' ', '=', {}}     = .GrowSplit,
 	{' ', '-', {}}     = .ShrinkSplit,
 	{' ', 'z', {}}     = .ToggleSoftWrap,
 	{' ', 'i', {}}     = .ToggleWhitespace,
 	{' ', 'n', {}}     = .NextChange,
-	{' ', 'p', {}}     = .PreviousChange,
+	{' ', 'N', {}}     = .PreviousChange,
 	{' ', 'a', {}}     = .AddCursorAbove,
 	{' ', 'm', {}}     = .FlipSelections,
 	{' ', 'e', {}}     = .OpenFileDialog,
@@ -554,6 +562,8 @@ execute_command :: proc(editor: ^Editor, command: Command, count: int) {
 		open_line(editor, buffer, false)
 	case .Delete:
 		delete_selections(editor, buffer, true)
+		editor.mode = .Normal
+		sfx_delete(editor)
 	case .Change:
 		delete_selections(editor, buffer, true)
 		editor.mode = .Insert
@@ -758,6 +768,16 @@ execute_command :: proc(editor: ^Editor, command: Command, count: int) {
 		diagnostic_go(editor, 1)
 	case .PreviousDiagnostic:
 		diagnostic_go(editor, -1)
+	case .OpenDiagnostics:
+		if len(editor.diagnostics) == 0 {
+			notify("Nothing was reported by the last build")
+			break
+		}
+		picker_open(editor, .Diagnostics, "Problem")
+	case .InsertTodo:
+		insert_tagged_comment(editor, buffer, "TODO")
+	case .InsertNote:
+		insert_tagged_comment(editor, buffer, "NOTE")
 	case .OpenWorkspaces:
 		workspace_pick(editor)
 	case .NewWorkspace:

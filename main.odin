@@ -47,6 +47,7 @@ Editor :: struct {
 	output:          Output,
 	diagnostics:       [dynamic]Diagnostic,
 	diagnostic_cursor: int,
+	previous_path:     string,
 	mode:            Mode,
 	count:           int,
 	pending_prefix:  u8,
@@ -63,11 +64,11 @@ Editor :: struct {
 	search_pattern:  string,
 	prompt:          Prompt_Kind,
 	prompt_input:    [dynamic]u8,
+	prompt_cursor:   int,
 	prompt_origin:   int,
 	prompt_selections: [dynamic]Range,
 	picker:          Picker,
 	settings:        Settings,
-	color_picker:    Color_Picker,
 	flags:           Editor_Flags,
 	save_timer:      f32,
 	width:           i32,
@@ -156,12 +157,21 @@ editor_close_buffer :: proc(editor: ^Editor, force: bool) {
 		return
 	}
 	closing := editor_view(editor).buffer
+	previous := -1
+	for other, position in editor.buffers {
+		if position != closing && other.path == editor.previous_path {
+			previous = position
+		}
+	}
 	ordered_remove(&editor.buffers, closing)
 	if len(editor.buffers) == 0 {
 		append(&editor.buffers, buffer_create(editor, ""))
 	}
 	for &view in editor.views {
 		view.buffer = clamp(view.buffer > closing ? view.buffer - 1 : view.buffer, 0, len(editor.buffers) - 1)
+	}
+	if previous >= 0 {
+		editor_view(editor).buffer = clamp(previous > closing ? previous - 1 : previous, 0, len(editor.buffers) - 1)
 	}
 	editor.flags += {.SessionDirty}
 	log.infof("closed %s", filename_of(buffer.display))
@@ -184,9 +194,6 @@ handle_event :: proc(editor: ^Editor, event: sdl.Event) {
 	case .TEXT_INPUT:
 		handle_text(editor, string(event.text.text))
 	case .MOUSE_BUTTON_DOWN, .MOUSE_BUTTON_UP:
-		if editor.color_picker.open {
-			color_picker_mouse(editor, event.button.x, event.button.y, event.type == .MOUSE_BUTTON_DOWN, event.type == .MOUSE_BUTTON_UP)
-		}
 		if event.type == .MOUSE_BUTTON_UP {
 			if button := window_button_at(editor, event.button.x, event.button.y); button != .None {
 				window_button_press(editor, button)
@@ -201,9 +208,6 @@ handle_event :: proc(editor: ^Editor, event: sdl.Event) {
 			_ = sdl.ShowCursor()
 		}
 		editor.hovered_button = window_button_at(editor, event.motion.x, event.motion.y)
-		if editor.color_picker.open {
-			color_picker_mouse(editor, event.motion.x, event.motion.y, false, false)
-		}
 	}
 }
 
@@ -253,6 +257,7 @@ editor_reload :: proc(editor: ^Editor, buffer: ^Buffer) {
 	copy(buffer.text[:], data)
 	delete(data)
 	buffer.flags -= {.Modified}
+	buffer.modified, _ = scan_stat(buffer.path)
 	buffer_refresh(buffer)
 	buffer_clamp_selections(buffer)
 	log.infof("reloaded %s", buffer.path)
@@ -366,6 +371,13 @@ main :: proc() {
 	log_file, log_error := os.open(log_path, {.Write, .Create, .Trunc, .Unbuffered_IO})
 	context.logger = toasting_logger(log_error == nil ? log.create_file_logger(log_file, .Debug) : log.nil_logger())
 	defer if log_error == nil {os.close(log_file)}
+	if log_error == nil {
+		crash_reports_to(log_file)
+	}
+	context.assertion_failure_proc = proc(prefix, message: string, location: runtime.Source_Code_Location) -> ! {
+		log.fatalf("%s: %s at %s(%d:%d) in %s", prefix, message, location.file_path, location.line, location.column, location.procedure)
+		runtime.trap()
+	}
 
 	editor := new(Editor)
 	editor.config = default_config()
@@ -580,6 +592,8 @@ main :: proc() {
 		delta_time := clamp(f32(ticks - previous_ticks) / 1000, 0, 0.1)
 		previous_ticks = ticks
 		editor.time += delta_time
+		workspace_poll(editor)
+		sfx_noise(editor)
 
 		if scripted_cursor < len(scripted_keys) {
 			scripted_cursor = feed_scripted_key(editor, scripted_keys, scripted_cursor)
@@ -615,9 +629,6 @@ main :: proc() {
 		}
 		if editor.picker.kind != .None {
 			draw_picker(editor)
-		}
-		if editor.color_picker.open {
-			draw_color_picker(editor)
 		}
 		draw_toasts(editor)
 		painter_flush(&editor.painter)

@@ -20,6 +20,7 @@ Picker_Kind :: enum u8 {
 	Commands,
 	Themes,
 	Workspaces,
+	Diagnostics,
 }
 
 Picker_Item :: struct {
@@ -190,6 +191,11 @@ picker_open :: proc(editor: ^Editor, kind: Picker_Kind, name: string) {
 	case .Workspaces:
 		for root in workspace_list() {
 			picker_add(picker, {label = filename_of(root), detail = root, value = root})
+		}
+	case .Diagnostics:
+		for entry, position in editor.diagnostics {
+			detail := fmt.tprintf("%s  %s:%d", entry.warning ? "warning" : "error", filename_of(entry.path), entry.line)
+			picker_add(picker, {label = entry.message, detail = detail, buffer = position})
 		}
 	case .Menu, .GlobalSearch, .References, .None:
 	}
@@ -409,6 +415,8 @@ picker_preview_apply :: proc(editor: ^Editor) {
 		}
 		preview_show(editor, item.path, item.offset)
 		log.debugf("previewed %s in %.2f ms", filename_of(item.path), time.duration_milliseconds(time.tick_since(started)))
+	case .Diagnostics:
+		diagnostic_show(editor, item.buffer)
 	case .Buffers, .Commands, .Menu, .Workspaces, .None:
 	}
 }
@@ -419,12 +427,19 @@ picker_close :: proc(editor: ^Editor, restore: bool) {
 		if picker.kind == .Themes {
 			editor.config.theme = picker.saved_theme
 		}
-		if preview_discard(editor) {
+		wandered := false
+		switch picker.kind {
+		case .Files, .Symbols, .GlobalSearch, .References, .Diagnostics:
+			wandered = true
+		case .Buffers, .Commands, .Menu, .Themes, .Workspaces, .None:
+		}
+		preview_discard(editor)
+		if wandered {
 			view := editor_view(editor)
 			view.buffer = clamp(picker.saved_buffer, 0, len(editor.buffers) - 1)
 			view.scroll_line = picker.saved_scroll
 			goto_offset(editor_buffer(editor), picker.saved_offset, false)
-			log.debugf("picker preview reverted to buffer %d", view.buffer)
+			log.debugf("picker left the buffer as it was, back to %d", view.buffer)
 		}
 	}
 	picker.preview_due = 0
@@ -515,6 +530,8 @@ picker_confirm :: proc(editor: ^Editor) {
 		editor_view(editor).buffer = clamp(item.buffer, 0, len(editor.buffers) - 1)
 	case .Workspaces:
 		workspace_open(editor, item.value)
+	case .Diagnostics:
+		diagnostic_show(editor, item.buffer)
 	case .Files, .Symbols, .GlobalSearch, .References:
 		jump_push(editor)
 		editor_open_file(editor, item.path)

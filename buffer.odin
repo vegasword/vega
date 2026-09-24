@@ -47,6 +47,7 @@ Buffer :: struct {
 	undo_stack:  [dynamic]History_Entry,
 	redo_stack:  [dynamic]History_Entry,
 	clean_depth: int,
+	modified:    i64,
 }
 
 buffer_hidden :: proc(buffer: ^Buffer) -> bool {
@@ -76,6 +77,9 @@ buffer_create :: proc(editor: ^Editor, path: string, flags: Buffer_Flags = {}, p
 	buffer.display = strings.clone(path if path != "" else "[scratch]")
 	buffer.language = language_of_path(path)
 	buffer.kind = content_kind_of_path(path)
+	if path != "" {
+		buffer.modified, _ = scan_stat(path)
+	}
 	if path != "" && buffer.kind == .Image {
 		buffer.flags += {.ReadOnly}
 		image_load(editor, buffer)
@@ -265,6 +269,7 @@ buffer_save :: proc(editor: ^Editor, buffer: ^Buffer) -> bool {
 	}
 	buffer.flags -= {.Modified}
 	buffer.clean_depth = len(buffer.undo_stack)
+	buffer.modified, _ = scan_stat(buffer.path)
 	buffer_set_baseline(editor, buffer)
 	return true
 }

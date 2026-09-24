@@ -1,6 +1,7 @@
-﻿package vega
+package vega
 
 import "core:log"
+import "core:math"
 import "core:math/rand"
 import "core:strings"
 import sdl "vendor:sdl3"
@@ -15,13 +16,31 @@ Click_Sample :: struct {
 }
 
 Sfx :: struct {
-	families: [dynamic]string,
-	samples:  [dynamic]Click_Sample,
-	streams:  [SFX_STREAMS]^sdl.AudioStream,
-	next:     int,
-	ready:    bool,
-	logged:   bool,
+	families:  [dynamic]string,
+	samples:   [dynamic]Click_Sample,
+	deletions: [dynamic][]u8,
+	streams:   [SFX_STREAMS]^sdl.AudioStream,
+	noise:     ^sdl.AudioStream,
+	brown:     f32,
+	blocked:   f32,
+	previous:  f32,
+	warmth:    f32,
+	next:      int,
+	ready:     bool,
+	logged:    bool,
 }
+
+DELETION_FAMILY :: "deletion"
+NOISE_RATE :: 44100
+NOISE_CHUNK :: NOISE_RATE / 4
+NOISE_QUEUE :: NOISE_RATE * 2
+NOISE_STEP :: 0.02
+NOISE_LEAK :: 1.02
+NOISE_GAIN :: 4.0
+NOISE_BLOCK :: 0.9975
+NOISE_DARKEST :: 50.0
+NOISE_MIDDLE :: 200.0
+NOISE_BRIGHTEST :: 800.0
 
 sfx: Sfx
 
@@ -68,6 +87,10 @@ sfx_load :: proc(editor: ^Editor) {
 		spec = loaded
 
 		family := sample_family(entry.name)
+		if family == DELETION_FAMILY {
+			append(&sfx.deletions, buffer[:length])
+			continue
+		}
 		index := -1
 		for known, position in sfx.families {
 			if known == family {
@@ -132,16 +155,72 @@ sfx_click :: proc(editor: ^Editor) {
 	}
 
 	sample := sfx.samples[choices[rand.int_max(len(choices))]]
-	stream := sfx.streams[sfx.next]
-	sfx.next = (sfx.next + 1) % SFX_STREAMS
-	if sdl.GetAudioStreamQueued(stream) > i32(len(sample.data)) {
-		sdl.ClearAudioStream(stream)
-	}
-	sdl.SetAudioStreamFrequencyRatio(stream, 0.88 + rand.float32() * 0.24)
-	sdl.SetAudioStreamGain(stream, editor.config.click_volume)
-	played := sdl.PutAudioStreamData(stream, raw_data(sample.data), i32(len(sample.data)))
+	sfx_play(editor, sample.data, editor.config.click_volume, 0.88 + rand.float32() * 0.24)
 	if !sfx.logged {
 		sfx.logged = true
-		log.debugf("first key click from %s, queued %v", sfx.families[family], played)
+		log.debugf("first key click from %s", sfx.families[family])
+	}
+}
+
+sfx_delete :: proc(editor: ^Editor) {
+	if !sfx.ready || len(sfx.deletions) == 0 || !(.DeleteSound in editor.config.options) {
+		return
+	}
+	sfx_play(editor, sfx.deletions[rand.int_max(len(sfx.deletions))], editor.config.delete_volume, 0.94 + rand.float32() * 0.12)
+}
+
+sfx_play :: proc(editor: ^Editor, data: []u8, volume, ratio: f32) {
+	if volume <= 0 {
+		return
+	}
+	stream := sfx.streams[sfx.next]
+	sfx.next = (sfx.next + 1) % SFX_STREAMS
+	if sdl.GetAudioStreamQueued(stream) > i32(len(data)) {
+		sdl.ClearAudioStream(stream)
+	}
+	sdl.SetAudioStreamFrequencyRatio(stream, ratio)
+	sdl.SetAudioStreamGain(stream, volume)
+	sdl.PutAudioStreamData(stream, raw_data(data), i32(len(data)))
+}
+
+sfx_noise :: proc(editor: ^Editor) {
+	wanted := (.BrownNoise in editor.config.options) && editor.config.noise_volume > 0
+	if !wanted {
+		if sfx.noise != nil {
+			sdl.DestroyAudioStream(sfx.noise)
+			sfx.noise = nil
+			log.debug("brown noise stopped")
+		}
+		return
+	}
+	if sfx.noise == nil {
+		spec := sdl.AudioSpec{format = .F32, channels = 1, freq = NOISE_RATE}
+		sfx.noise = sdl.OpenAudioDeviceStream(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nil, nil)
+		if sfx.noise == nil {
+			log.errorf("no audio device for the noise: %s", sdl.GetError())
+			return
+		}
+		sdl.ResumeAudioStreamDevice(sfx.noise)
+		sfx.brown, sfx.blocked, sfx.previous, sfx.warmth = 0, 0, 0, 0
+		log.debug("brown noise started")
+	}
+	sdl.SetAudioStreamGain(sfx.noise, editor.config.noise_volume)
+	cutoff := NOISE_DARKEST * math.pow(NOISE_BRIGHTEST / NOISE_DARKEST, clamp(editor.config.noise_tone, 0, 1))
+	tilt := 1 - math.exp(-2 * math.PI * cutoff / NOISE_RATE)
+	gain := NOISE_GAIN * math.pow(NOISE_MIDDLE / cutoff, 0.26)
+	chunk := make([]f32, NOISE_CHUNK, context.temp_allocator)
+	for sdl.GetAudioStreamQueued(sfx.noise) < i32(NOISE_QUEUE * size_of(f32)) {
+		for &sample in chunk {
+			sfx.brown = (sfx.brown + NOISE_STEP * (rand.float32() * 2 - 1)) / NOISE_LEAK
+			value := sfx.brown * gain
+			sfx.blocked = NOISE_BLOCK * (sfx.blocked + value - sfx.previous)
+			sfx.previous = value
+			sfx.warmth += tilt * (sfx.blocked - sfx.warmth)
+			sample = clamp(sfx.warmth, -1, 1)
+		}
+		if !sdl.PutAudioStreamData(sfx.noise, raw_data(chunk), i32(len(chunk) * size_of(f32))) {
+			log.debugf("the noise could not be queued: %s", sdl.GetError())
+			return
+		}
 	}
 }

@@ -5,6 +5,7 @@ import "core:log"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import sdl "vendor:sdl3"
 
 workspaces_path: string
 
@@ -82,6 +83,32 @@ workspace_remember :: proc(root: string) {
 	if os.write_entire_file(workspaces_path, transmute([]u8)strings.to_string(builder)) != nil {
 		log.error("could not write the workspace list")
 	}
+}
+
+workspace_due: u64
+
+workspace_poll :: proc(editor: ^Editor) {
+	if watch_taken() {
+		workspace_due = u64(sdl.GetTicks()) + 400
+	}
+	if workspace_due == 0 {
+		return
+	}
+	if u64(sdl.GetTicks()) < workspace_due || index_job != nil {
+		return
+	}
+	workspace_due = 0
+	project_files_invalidate()
+	index_start(&editor.index, editor.index.root)
+	for buffer in editor.buffers {
+		if buffer.path == "" || (.Modified in buffer.flags) || buffer_hidden(buffer) {
+			continue
+		}
+		if modified, ok := scan_stat(buffer.path); ok && modified != buffer.modified {
+			editor_reload(editor, buffer)
+		}
+	}
+	log.debug("the workspace changed on disk, reindexing")
 }
 
 workspace_pick :: proc(editor: ^Editor) {

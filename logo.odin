@@ -4,7 +4,16 @@ import "core:log"
 import sdl "vendor:sdl3"
 import stbi "vendor:stb/image"
 
-logo_png := #load("icons/logo.png")
+baked_icons := #load_directory("icons")
+
+logo_bytes :: proc() -> []u8 {
+	for entry in baked_icons {
+		if entry.name == "logo.png" {
+			return entry.data
+		}
+	}
+	return nil
+}
 
 Logo :: struct {
 	texture: ^sdl.Texture,
@@ -13,6 +22,11 @@ Logo :: struct {
 }
 
 logo_load :: proc(editor: ^Editor) {
+	logo_png := logo_bytes()
+	if len(logo_png) == 0 {
+		log.debug("no logo was baked in, the top bar keeps its place")
+		return
+	}
 	width, height, channels: i32
 	pixels := stbi.load_from_memory(raw_data(logo_png), i32(len(logo_png)), &width, &height, &channels, 4)
 	if pixels == nil {

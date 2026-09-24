@@ -1,10 +1,16 @@
-﻿package vega
+package vega
 
 import "core:fmt"
 import "core:log"
 import "core:math"
+import "core:strings"
 import "core:unicode/utf8"
 
+Secondary_Cursor :: struct {
+	x:      f32,
+	y:      f32,
+	offset: int,
+}
 
 Rect :: struct {
 	x:      f32,
@@ -26,7 +32,7 @@ View :: struct {
 	image_zoom:    f32,
 	last_buffer:   ^Buffer,
 	last_rect:     Rect,
-	secondary:     [dynamic][2]f32,
+	secondary:     [dynamic]Secondary_Cursor,
 }
 
 editor_view :: proc(editor: ^Editor) -> ^View {
@@ -60,7 +66,7 @@ view_gutter_columns :: proc(editor: ^Editor, view: ^View) -> int {
 		return 2
 	}
 	digits := 1
-	for count := buffer_line_count(editor.buffers[view.buffer]); count >= 10; count /= 10 {
+	for count := buffer_line_count(editor.buffers[clamp(view.buffer, 0, len(editor.buffers) - 1)]); count >= 10; count /= 10 {
 		digits += 1
 	}
 	return max(5, digits + 3)
@@ -297,6 +303,7 @@ Glyph_Placement :: struct {
 draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 	painter := &editor.painter
 	theme := editor.active_theme
+	view.buffer = clamp(view.buffer, 0, len(editor.buffers) - 1)
 	buffer := editor.buffers[view.buffer]
 
 	if view.image_zoom == 0 {
@@ -308,6 +315,10 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 	}
 
 	if view.last_buffer != buffer {
+		if active && view.last_buffer != nil && view.last_buffer.path != "" {
+			delete(editor.previous_path)
+			editor.previous_path = strings.clone(view.last_buffer.path)
+		}
 		view.last_buffer = buffer
 		view.scroll_line = clamp(buffer.scroll, 0, max(0, buffer_line_count(buffer) - 1))
 		view.scroll_visual = f32(view.scroll_line)
@@ -332,7 +343,7 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 	columns := view_text_columns(editor, view)
 	visible := view_visible_lines(editor, view)
 	cursor_line := buffer_line_of(buffer, buffer_primary(buffer).head)
-	dim: f32 = active ? 1 : 0.5
+	dim: f32 = 1
 
 	view.scroll_visual = (.SmoothScroll in editor.config.options) ? approach(view.scroll_visual, f32(view.scroll_line), editor.config.scroll_speed, delta_time) : f32(view.scroll_line)
 	if abs(view.scroll_visual - f32(view.scroll_line)) < 0.03 {
@@ -341,12 +352,13 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 	first := int(math.floor(view.scroll_visual))
 	offset_y := (view.scroll_visual - f32(first)) * line_height
 
-	if !active {
-		push_rect(painter, pane.x, pane.y, pane.width, pane.height, theme[.Overlay])
-	}
 	if len(editor.views) > 1 {
-		push_rect(painter, pane.x + pane.width - 1, pane.y, 1, pane.height, active ? theme[.Accent] : theme[.Gutter])
-		push_rect(painter, pane.x, pane.y + pane.height - 1, pane.width, 1, active ? theme[.Accent] : theme[.Gutter])
+		edge := active ? f32(2) : f32(1)
+		color := active ? theme[.Accent] : theme[.Gutter]
+		push_rect(painter, pane.x, pane.y, pane.width, edge, color)
+		push_rect(painter, pane.x, pane.y + pane.height - edge, pane.width, edge, color)
+		push_rect(painter, pane.x, pane.y, edge, pane.height, color)
+		push_rect(painter, pane.x + pane.width - edge, pane.y, edge, pane.height, color)
 	}
 	painter_set_clip(painter, {i32(pane.x), i32(pane.y), i32(pane.width), i32(pane.height)})
 
@@ -387,11 +399,13 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 			}
 		}
 		if len(editor.diagnostics) > 0 {
-			place := gutter + f32(max(0, line_visual_width(buffer, line, tab_width) - view.scroll_x)) * cell
-			draw_diagnostic_mark(editor, buffer, line, gutter, place, line_top)
+			draw_diagnostic_mark(editor, buffer, line, gutter, line_top, tab_width, view.scroll_x)
 		}
 
 		column := 0
+		coloured_token := -1
+		token_color := theme[.Text]
+		token_bold := false
 		indent := (.SoftWrap in editor.config.options) ? line_indent_columns(editor, view, buffer, line) : 0
 		drawn_segment := 0
 		run_start, run_end := 0, 0
@@ -422,7 +436,7 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 			if offset == buffer_primary(buffer).head {
 				cursor_place = {x, y, true}
 			} else if heads[offset] {
-				append(&view.secondary, [2]f32{x, y})
+				append(&view.secondary, Secondary_Cursor{x, y, offset})
 			}
 			if character == '\r' {
 				continue
@@ -455,9 +469,17 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 				}
 				color = theme[.Text]
 				if token_index < len(buffer.tokens) && int(buffer.tokens[token_index].start) <= offset {
-					kind := buffer.tokens[token_index].kind
-					color = theme[token_color_slot(kind)]
-					bold = kind == .Function
+					token := buffer.tokens[token_index]
+					if token_index != coloured_token {
+						coloured_token = token_index
+						token_color = theme[token_color_slot(token.kind)]
+						token_bold = token.kind == .Function
+						if token.kind == .Identifier && index_is_type(&editor.index, token_text(buffer.text[:], token)) {
+							token_color = theme[.Type]
+						}
+					}
+					color = token_color
+					bold = token_bold
 				}
 			}
 
@@ -486,12 +508,8 @@ draw_view :: proc(editor: ^Editor, view: ^View, active: bool, delta_time: f32) {
 			if buffer_primary(buffer).head == end {
 				cursor_place = {place.x, place.y, true}
 			} else {
-				append(&view.secondary, place)
+				append(&view.secondary, Secondary_Cursor{place.x, place.y, end})
 			}
-		}
-		if len(editor.diagnostics) > 0 {
-			place := gutter + f32(max(0, line_visual_width(buffer, line, tab_width) - view.scroll_x)) * cell
-			draw_diagnostic_message(editor, buffer, line, gutter, place, line_top, rect.x + rect.width - place)
 		}
 		row += line_rows(editor, view, buffer, line)
 	}
@@ -543,14 +561,21 @@ draw_cursors :: proc(editor: ^Editor, view: ^View, buffer: ^Buffer, place: Glyph
 	}
 
 	for place in view.secondary {
-		push_rect(painter, place.x, place.y, max(2, cell * 0.16), line_height, color * [4]f32{1, 1, 1, 0.7})
+		switch shape {
+		case .Block:
+			push_rect(painter, place.x, place.y, cell, line_height, color * [4]f32{1, 1, 1, 0.8})
+			if place.offset < len(buffer.text) && buffer.text[place.offset] != '\n' && buffer.text[place.offset] != '\t' {
+				push_glyph(painter, place.x, place.y, rune_at(buffer.text[:], place.offset), theme[.Background])
+			}
+		case .Bar:
+			push_rect(painter, place.x, place.y, max(2, cell * 0.16), line_height, color)
+		case .Underline:
+			push_rect(painter, place.x, place.y + line_height - 3, cell, 3, color)
+		}
 	}
 }
 
 context_hints :: proc(editor: ^Editor) -> string {
-	if editor.color_picker.open {
-		return "Drag the square   arrows hue and value   tab saturation   type a hex   enter closes"
-	}
 	if editor.picker.kind != .None {
 		switch editor.picker.kind {
 		case .Menu:
@@ -565,6 +590,8 @@ context_hints :: proc(editor: ^Editor) -> string {
 			return "Tab next   enter focus   esc cancel"
 		case .Workspaces:
 			return "Tab next   enter switch workspace   esc cancel"
+		case .Diagnostics:
+			return "Tab next   enter goes to the problem   esc back to where you were"
 		case .Symbols:
 			return "Type to fuzzy match   tab next   enter jump   esc cancel"
 		case .GlobalSearch:
@@ -586,9 +613,6 @@ context_hints :: proc(editor: ^Editor) -> string {
 		case .Sections:
 			return "Up and down pick a section   tab or right moves in   esc saves and closes"
 		case .Fields:
-			if editor.settings.editing_theme {
-				return "Up and down pick a colour   enter opens the picker   esc saves and closes"
-			}
 			return "Up and down pick   left and right adjust   enter opens   esc saves and closes"
 		case .Scheme:
 			return "Arrows move on the keyboard   page up and down change layer   enter binds   delete unbinds"
@@ -613,6 +637,8 @@ context_hints :: proc(editor: ^Editor) -> string {
 			return "Enter runs   esc cancels"
 		case .GotoLine:
 			return "Type a line number   enter jumps   esc cancels"
+		case .UserName:
+			return "Type the name your todo comments are signed with   enter keeps it"
 		case .None:
 		}
 	}
@@ -660,11 +686,16 @@ draw_top_bar :: proc(editor: ^Editor) {
 		pen = push_text(painter, pen + painter.cell_width, text_y, label, focused ? theme[.Text] : theme[.Gutter])
 	}
 
+	color := theme[.Comment]
+	if entry, troubled := diagnostic_under_cursor(editor); troubled {
+		hints = entry.message
+		color = diagnostic_color(entry)
+	}
 	buttons := painter.cell_width * 12
 	room := max(0, int((f32(editor.width) - buttons - pen) / painter.cell_width) - 3)
 	if room >= 16 {
 		visible := hints[:min(room, len(hints))]
-		push_text(painter, f32(editor.width) - buttons - painter.cell_width * f32(len(visible) + 1), text_y, visible, theme[.Comment])
+		push_text(painter, f32(editor.width) - buttons - painter.cell_width * f32(len(visible) + 1), text_y, visible, color)
 	}
 	draw_window_buttons(editor)
 }
@@ -705,17 +736,28 @@ draw_status_bar :: proc(editor: ^Editor) {
 			prefix = ":"
 		case .GotoLine:
 			prefix = "Goto line: "
+		case .UserName:
+			prefix = "Your name: "
 		case .None:
 		}
-		typed := fmt.tprintf(" %s%s_", prefix, string(editor.prompt_input[:]))
+		input := string(editor.prompt_input[:])
+		caret := clamp(editor.prompt_cursor, 0, len(input))
+		typed := fmt.tprintf(" %s%s", prefix, input)
 		if len(typed) > columns {
 			typed = typed[len(typed) - columns:]
 		}
 		push_text(painter, mode_width, text_y, typed, theme[.Cursor])
+		caret_x := mode_width + f32(len(typed) - len(input) + caret) * painter.cell_width
+		push_rect(painter, caret_x, text_y, max(2, painter.cell_width * 0.16), painter.line_height, theme[.Cursor])
 		return
 	}
 
 	line := buffer_line_of(buffer, buffer_primary(buffer).head)
+	working := ""
+	if shell_job != nil || index_job != nil {
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		working = fmt.tprintf(" %s %s", frames[int(editor.time * 12) % len(frames)], shell_job != nil ? shell_job.command : "indexing")
+	}
 	left := fmt.tprintf(
 		" %d sel | %d:%d | %d lines",
 		len(buffer.selections),
@@ -734,6 +776,9 @@ draw_status_bar :: proc(editor: ^Editor) {
 	center = center[:min(len(center), max(0, columns - len(left) - len(right) - 2))]
 
 	pen := push_text(painter, mode_width, text_y, left, theme[.StatusText])
+	if working != "" {
+		pen = push_text(painter, pen, text_y, working, theme[.Accent])
+	}
 	right_x := f32(editor.width) - painter.cell_width * f32(len(right))
 	center_x := clamp(
 		(f32(editor.width) - painter.cell_width * f32(len(center))) / 2,

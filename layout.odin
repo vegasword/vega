@@ -118,6 +118,20 @@ layout_resize :: proc(editor: ^Editor, amount: f32) {
 	editor.nodes[parent].ratio = clamp(editor.nodes[parent].ratio + growing, 0.15, 0.85)
 }
 
+layout_sound :: proc(nodes: []Split_Node, views, root, depth: int) -> bool {
+	if root < 0 || root >= len(nodes) || depth > len(nodes) {
+		return false
+	}
+	entry := nodes[root]
+	if entry.kind == .Leaf {
+		return entry.view >= 0 && entry.view < views
+	}
+	if entry.first == root || entry.second == root {
+		return false
+	}
+	return layout_sound(nodes, views, entry.first, depth + 1) && layout_sound(nodes, views, entry.second, depth + 1)
+}
+
 layout_assign :: proc(editor: ^Editor, node: int, area: Rect) {
 	entry := editor.nodes[node]
 	if entry.kind == .Leaf {

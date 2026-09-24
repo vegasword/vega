@@ -63,6 +63,22 @@ Project_Index :: struct {
 	units:       [dynamic]Index_Unit,
 	records:     map[string][]u8,
 	folders:     map[string]i64,
+	types:       map[string]bool,
+	types_ready: bool,
+}
+
+index_is_type :: proc(index: ^Project_Index, name: string) -> bool {
+	if !index.types_ready {
+		index.types_ready = true
+		clear(&index.types)
+		for symbol in index.symbols {
+			if symbol.kind == .Type {
+				index.types[symbol.name] = true
+			}
+		}
+		log.debugf("%d type names known for highlighting", len(index.types))
+	}
+	return name in index.types
 }
 
 index_cache: map[string]Cached_File
@@ -136,6 +152,8 @@ index_destroy :: proc(index: ^Project_Index) {
 	clear(&index.units)
 	clear(&index.records)
 	clear(&index.folders)
+	clear(&index.types)
+	index.types_ready = false
 	for arena in index.arenas {
 		virtual.arena_destroy(arena)
 		free(arena)
@@ -400,6 +418,7 @@ index_start :: proc(index: ^Project_Index, root: string) {
 	job.worker.data = job
 	job.worker.init_context = context
 	index_job = job
+	watch_start(root)
 	started := time.tick_now()
 	thread.start(job.worker)
 	log.debugf("indexing %s in the background, handed over in %.3f ms", root, time.duration_milliseconds(time.tick_since(started)))

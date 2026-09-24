@@ -1,6 +1,7 @@
 ﻿#+build windows
 package vega
 
+import "core:os"
 import "core:strings"
 import win "core:sys/windows"
 
@@ -40,6 +41,18 @@ scan_directory :: proc(path: string, allocator := context.temp_allocator) -> []S
 		}
 	}
 	return found[:]
+}
+
+scan_replace :: proc(path: string, data: []u8) -> bool {
+	temporary := strings.concatenate({path, ".writing"}, context.temp_allocator)
+	if os.write_entire_file(temporary, data) != nil {
+		return false
+	}
+	if !win.MoveFileExW(win.utf8_to_wstring(temporary), win.utf8_to_wstring(path), win.MOVEFILE_REPLACE_EXISTING) {
+		os.remove(temporary)
+		return false
+	}
+	return true
 }
 
 scan_stat :: proc(path: string) -> (modified: i64, ok: bool) {

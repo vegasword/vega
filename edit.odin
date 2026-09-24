@@ -171,12 +171,14 @@ select_lines :: proc(buffer: ^Buffer, extend: bool) {
 	for &selection in buffer.selections {
 		first := buffer_line_of(buffer, range_low(selection))
 		last := buffer_line_of(buffer, max(range_low(selection), range_high(buffer, selection) - 1))
-		if extend && range_high(buffer, selection) == buffer_line_bounds_end(buffer, last) {
+		_, reached := buffer_line_bounds(buffer, last)
+		if extend && range_high(buffer, selection) >= reached {
 			last = min(last + 1, buffer_line_count(buffer) - 1)
 		}
 		start, _ := buffer_line_bounds(buffer, first)
+		_, finish := buffer_line_bounds(buffer, last)
 		selection.anchor = start
-		selection.head = max(start, buffer_line_bounds_end(buffer, last) - 1)
+		selection.head = max(start, finish - 1)
 	}
 	buffer_merge_selections(buffer)
 }
@@ -414,6 +416,25 @@ comment_prefix :: proc(language: Language) -> string {
 	case .Plain:
 	}
 	return "#"
+}
+
+insert_tagged_comment :: proc(editor: ^Editor, buffer: ^Buffer, tag: string) {
+	if .ReadOnly in buffer.flags {
+		return
+	}
+	who := editor.config.user_name == "" ? "me" : editor.config.user_name
+	head := buffer_primary(buffer).head
+	line := buffer_line_of(buffer, head)
+	start, end := buffer_line_bounds(buffer, line)
+	blank := strings.trim_space(buffer_line_text(buffer, line)) == ""
+	spacing := blank ? "" : " "
+	comment := fmt.tprintf("%s%s%s(%s): ", spacing, comment_prefix(buffer.language), tag, who)
+	buffer_snapshot(buffer)
+	goto_offset(buffer, blank ? start : end, false)
+	insert_text(buffer, comment)
+	editor.mode = .Insert
+	editor_ensure_visible(editor)
+	log.debugf("%s comment inserted on line %d", tag, line + 1)
 }
 
 comment_selections :: proc(buffer: ^Buffer) {

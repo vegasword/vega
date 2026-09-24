@@ -62,7 +62,7 @@ preview_warm :: proc(editor: ^Editor) {
 	picker.warming = false
 	switch picker.kind {
 	case .Files, .Symbols, .GlobalSearch, .References:
-	case .Buffers, .Menu, .Commands, .Themes, .Workspaces, .None:
+	case .Buffers, .Menu, .Commands, .Themes, .Workspaces, .Diagnostics, .None:
 		return
 	}
 	read := 0

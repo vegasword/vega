@@ -23,6 +23,18 @@ scan_directory :: proc(path: string, allocator := context.temp_allocator) -> []S
 	return found[:]
 }
 
+scan_replace :: proc(path: string, data: []u8) -> bool {
+	temporary := strings.concatenate({path, ".writing"}, context.temp_allocator)
+	if os.write_entire_file(temporary, data) != nil {
+		return false
+	}
+	if os.rename(temporary, path) != nil {
+		os.remove(temporary)
+		return false
+	}
+	return true
+}
+
 scan_stat :: proc(path: string) -> (modified: i64, ok: bool) {
 	info, error := os.stat(path, context.temp_allocator)
 	if error != nil {

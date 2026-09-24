@@ -21,6 +21,7 @@ Prompt_Kind :: enum u8 {
 	SelectMatches,
 	CommandLine,
 	GotoLine,
+	UserName,
 }
 
 handle_text :: proc(editor: ^Editor, text: string) {
@@ -28,10 +29,6 @@ handle_text :: proc(editor: ^Editor, text: string) {
 		return
 	}
 	sfx_click(editor)
-	if editor.color_picker.open {
-		color_picker_text(editor, text)
-		return
-	}
 	if editor.hover.open {
 		hover_close(editor)
 	}
@@ -44,7 +41,9 @@ handle_text :: proc(editor: ^Editor, text: string) {
 		return
 	}
 	if editor.prompt != .None {
-		append(&editor.prompt_input, text)
+		editor.prompt_cursor = clamp(editor.prompt_cursor, 0, len(editor.prompt_input))
+		inject_at(&editor.prompt_input, editor.prompt_cursor, text)
+		editor.prompt_cursor += len(text)
 		prompt_preview(editor)
 		return
 	}
@@ -176,10 +175,6 @@ handle_key :: proc(editor: ^Editor, key: sdl.Keycode, mods: sdl.Keymod, scancode
 		return
 	}
 
-	if editor.color_picker.open {
-		color_picker_key(editor, key, shift)
-		return
-	}
 	if editor.picker.kind != .None {
 		picker_key(editor, key, shift, control)
 		return
@@ -190,6 +185,7 @@ handle_key :: proc(editor: ^Editor, key: sdl.Keycode, mods: sdl.Keymod, scancode
 	}
 
 	if editor.prompt != .None {
+		editor.prompt_cursor = clamp(editor.prompt_cursor, 0, len(editor.prompt_input))
 		switch key {
 		case sdl.K_ESCAPE:
 			prompt_restore(editor)
@@ -199,10 +195,24 @@ handle_key :: proc(editor: ^Editor, key: sdl.Keycode, mods: sdl.Keymod, scancode
 			prompt_confirm(editor)
 			editor_ensure_visible(editor)
 		case sdl.K_BACKSPACE:
-			if len(editor.prompt_input) > 0 {
-				resize(&editor.prompt_input, len(editor.prompt_input) - 1)
+			if editor.prompt_cursor > 0 {
+				ordered_remove(&editor.prompt_input, editor.prompt_cursor - 1)
+				editor.prompt_cursor -= 1
 				prompt_preview(editor)
 			}
+		case sdl.K_DELETE:
+			if editor.prompt_cursor < len(editor.prompt_input) {
+				ordered_remove(&editor.prompt_input, editor.prompt_cursor)
+				prompt_preview(editor)
+			}
+		case sdl.K_LEFT:
+			editor.prompt_cursor = max(0, editor.prompt_cursor - 1)
+		case sdl.K_RIGHT:
+			editor.prompt_cursor = min(len(editor.prompt_input), editor.prompt_cursor + 1)
+		case sdl.K_HOME:
+			editor.prompt_cursor = 0
+		case sdl.K_END:
+			editor.prompt_cursor = len(editor.prompt_input)
 		}
 		return
 	}
@@ -335,6 +345,7 @@ prompt_open :: proc(editor: ^Editor, kind: Prompt_Kind) {
 		word, _ := word_at(editor_buffer(editor).text[:], editor.prompt_origin)
 		append(&editor.prompt_input, word)
 	}
+	editor.prompt_cursor = len(editor.prompt_input)
 	log.debugf("prompt %v opened", kind)
 }
 
@@ -365,7 +376,7 @@ prompt_preview :: proc(editor: ^Editor) {
 		start, _ := buffer_line_bounds(buffer, line)
 		goto_offset(buffer, start, false)
 		editor_center_view(editor)
-	case .Rename, .CommandLine, .None:
+	case .Rename, .CommandLine, .UserName, .None:
 	}
 }
 
@@ -392,6 +403,11 @@ prompt_confirm :: proc(editor: ^Editor) {
 		editor_apply_rename(editor, input)
 	case .CommandLine:
 		run_command(editor, input)
+	case .UserName:
+		delete(editor.config.user_name)
+		editor.config.user_name = strings.clone(input)
+		editor.flags += {.ConfigDirty}
+		notify(fmt.tprintf("Comments will be signed %s", input))
 	case .GotoLine:
 		jump_push(editor)
 		line := clamp(int_of(input) - 1, 0, buffer_line_count(buffer) - 1)
